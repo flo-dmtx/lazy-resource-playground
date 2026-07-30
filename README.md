@@ -31,12 +31,26 @@ npx ng serve
   `lazyRxResource`) : snippets écrits en syntaxe proposition, variante userland dérivée
   mécaniquement (`toUserland` dans `figure.ts`).
 
-## StackBlitz
+## Hébergement
 
-Le projet est prévu pour être déposé tel quel (le postinstall rejoue le patch dans le
-WebContainer). Après upload, renseigner `STACKBLITZ_PROJECT` dans `demo-registry.ts` : les
-liens « edit ↗ » apparaissent alors sur chaque figure et sur les pages de démo
-(`?file=src/app/demo-*.ts&initialpath=/?demo=<name>`).
+- **GitHub Pages** : https://flo-dmtx.github.io/lazy-resource-playground/ — servi depuis la
+  branche `gh-pages`. Redéploiement (pas d'Actions : le token gh local n'a pas le scope
+  `workflow` ; `gh auth refresh -s workflow` permettrait d'y passer) :
+
+  ```sh
+  npx ng build --base-href ./
+  cd dist/playground/browser && touch .nojekyll && git init -b gh-pages \
+    && git add -A && git commit -m deploy \
+    && git push -f https://github.com/flo-dmtx/lazy-resource-playground.git gh-pages \
+    && rm -rf .git
+  ```
+
+- **StackBlitz** : https://stackblitz.com/github/flo-dmtx/lazy-resource-playground — le
+  WebContainer fait `npm install` (le postinstall rejoue le patch) puis `npm start`.
+  `STACKBLITZ_PROJECT` dans `demo-registry.ts` pilote les liens « edit ↗ » des figures
+  (`?file=src/app/demo-*.ts&initialpath=/?demo=<name>`).
+- **Gist** (le fichier userland seul, avec son README) :
+  https://gist.github.com/flo-dmtx/e8c9ff69bec58adf85e902eab9f7d900
 
 ## Où est l'implémentation
 
