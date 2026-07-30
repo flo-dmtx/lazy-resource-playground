@@ -16,6 +16,7 @@ import * as snip from "./snippets";
                 <a href="#use-cases">Use cases</a>
                 <a href="#tests">Tests</a>
                 <a href="#implementation">Implementation</a>
+                <a href="#links">Links</a>
             </nav>
 
             <main>
@@ -156,8 +157,12 @@ import * as snip from "./snippets";
                             >PR-ready fork</a
                         >
                         with the native option, tested with the repo's own suite (see Tests and
-                        Implementation below), and a userland twin, <code>lazyRxResource</code>,
-                        that can be copied until this lands. The demos on this page run the fork's
+                        Implementation below), and a userland twin,
+                        <a
+                            href="https://gist.github.com/flo-dmtx/e8c9ff69bec58adf85e902eab9f7d900"
+                            rel="noopener"
+                            ><code>lazyRxResource</code></a
+                        >, that can be copied until this lands. The demos on this page run the fork's
                         change itself: the project pins <code>&#64;angular/core</code> and applies
                         the same diff to the published bundle through patch-package, so every
                         figure executes the native
@@ -216,7 +221,12 @@ import * as snip from "./snippets";
                         machinery beside core, about 370 lines that have to follow core on every
                         release. The same semantics fits in about 90 lines inside
                         <code>ResourceImpl</code>, and that difference is why I am proposing the
-                        option upstream.
+                        option upstream. The reimplementation is published as a
+                        <a
+                            href="https://gist.github.com/flo-dmtx/e8c9ff69bec58adf85e902eab9f7d900"
+                            rel="noopener"
+                            >single-file gist</a
+                        >.
                     </p>
                 </section>
 
@@ -381,8 +391,56 @@ import * as snip from "./snippets";
                         write can never wake the resource; <code>destroy()</code> tears the pull
                         node down, so a destroyed resource can never load again. Until it lands,
                         the same semantics is available as one userland file: copy
-                        <code>src/app/lazy-resource.ts</code> out of this project.
+                        <code>src/app/lazy-resource.ts</code> out of this project, or grab it from
+                        <a
+                            href="https://gist.github.com/flo-dmtx/e8c9ff69bec58adf85e902eab9f7d900"
+                            rel="noopener"
+                            >the gist</a
+                        >.
                     </p>
+                </section>
+
+                <section id="links">
+                    <h2>Links</h2>
+                    <ul class="rules">
+                        <li>
+                            Use it today, one file:
+                            <a
+                                href="https://gist.github.com/flo-dmtx/e8c9ff69bec58adf85e902eab9f7d900"
+                                rel="noopener"
+                                >the <code>lazyResource</code> / <code>lazyRxResource</code> gist</a
+                            >.
+                        </li>
+                        <li>
+                            The native implementation, tested with the repo's own suite:
+                            <a
+                                href="https://github.com/flo-dmtx/angular/tree/feat/lazy-resource"
+                                rel="noopener"
+                                >branch <code>feat/lazy-resource</code></a
+                            >.
+                        </li>
+                        <li>
+                            This page:
+                            <a
+                                href="https://github.com/flo-dmtx/lazy-resource-playground"
+                                rel="noopener"
+                                >source on GitHub</a
+                            >,
+                            <a
+                                href="https://stackblitz.com/github/flo-dmtx/lazy-resource-playground"
+                                rel="noopener"
+                                >editable on StackBlitz</a
+                            >.
+                        </li>
+                        <li>
+                            The prior discussion:
+                            <a
+                                href="https://github.com/angular/angular/issues/58422"
+                                rel="noopener"
+                                >angular/angular#58422</a
+                            >.
+                        </li>
+                    </ul>
                 </section>
 
                 <footer class="foot">

@@ -18,7 +18,7 @@ import { RequestLog } from "./request-log";
         @if (entry) {
             @if (!embedded) {
                 <header>
-                    <a class="back" href="/">← the proposal</a>
+                    <a class="back" href="./">← the proposal</a>
                     <h1>{{ entry.title }}</h1>
                     <div class="tools">
                         @if (editor) {
@@ -35,7 +35,7 @@ import { RequestLog } from "./request-log";
                 <network-log></network-log>
             </div>
         } @else {
-            <p class="missing">Unknown demo. <a href="/">Back to the proposal.</a></p>
+            <p class="missing">Unknown demo. <a href="./">Back to the proposal.</a></p>
         }
     `,
     styles: `

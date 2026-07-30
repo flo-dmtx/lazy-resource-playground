@@ -205,10 +205,11 @@ export class Figure {
         codeSyntax() === "proposal" ? this.ts() : toUserland(this.ts()),
     );
 
-    readonly pageUrl = computed(() => `/?demo=${this.name()}`);
+    // Relative to the page, so the app works hosted under a sub-path (GitHub Pages).
+    readonly pageUrl = computed(() => `?demo=${this.name()}`);
 
     readonly frameSrc = computed(() =>
-        this.sanitizer.bypassSecurityTrustResourceUrl(`/?demo=${this.name()}&embed=1`),
+        this.sanitizer.bypassSecurityTrustResourceUrl(`?demo=${this.name()}&embed=1`),
     );
 
     readonly editor = computed(() => {

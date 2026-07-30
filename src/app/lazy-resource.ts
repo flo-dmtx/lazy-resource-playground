@@ -55,6 +55,21 @@ import type { RxResourceOptions } from "@angular/core/rxjs-interop";
  * projection (`idle`/`loading`/`reloading`/`resolved`/`local`/`error`). One deliberate
  * improvement over native: a synchronous source resolves during the very read that started it,
  * instead of a microtask later.
+ *
+ * Usage: copy this file into your project and swap the constructor.
+ *
+ * ```ts
+ * readonly user = lazyRxResource({
+ *     params: () => this.userId(),
+ *     stream: ({ params }) => this.api.user(params),
+ * });
+ * // nothing fetches until something reads user.value(), user.status(), ...
+ * ```
+ *
+ * This file is the userland twin of a proposal to add `lazy: true` to Angular's own resources:
+ * - interactive proposal: https://flo-dmtx.github.io/lazy-resource-playground/
+ * - playground source (edit on StackBlitz): https://github.com/flo-dmtx/lazy-resource-playground
+ * - native implementation, tested: https://github.com/flo-dmtx/angular/tree/feat/lazy-resource
  */
 export function lazyResource<T, R>(
     options: ResourceOptions<T, R> & { defaultValue: NoInfer<T> },
