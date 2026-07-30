@@ -6,8 +6,8 @@ import { LiftedDemo } from "./demo-lifted";
 import { SleepingParamsDemo } from "./demo-sleeping-params";
 import { TabsDemo } from "./demo-tabs";
 
-/** StackBlitz URL of this project once uploaded; empty hides the editor links. */
-export const STACKBLITZ_PROJECT = "";
+/** StackBlitz URL of this project; empty hides the editor links. */
+export const STACKBLITZ_PROJECT = "https://stackblitz.com/github/flo-dmtx/lazy-resource-playground";
 
 export interface DemoEntry {
     readonly component: Type<unknown>;
