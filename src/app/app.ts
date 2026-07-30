@@ -43,10 +43,9 @@ import * as snip from "./snippets";
                             change, whether something displays the data or not.
                         </li>
                         <li>
-                            <code>&#64;defer</code>: it defers a block of the view, its code and
-                            its rendering, but not its data. A resource declared inside the block
-                            is only created when the block renders, and it fetches eagerly at that
-                            moment: the data stays tied to the view.
+                            <code>&#64;defer</code>: it defers a block of the view. The code chunk
+                            loads and the block renders on its trigger; it says nothing about
+                            data.
                         </li>
                     </ul>
                     <p>As far as I know, nothing today defers the data itself.</p>
@@ -62,8 +61,9 @@ import * as snip from "./snippets";
                         </li>
                         <li>
                             or push each request down into a component that only exists once the
-                            UI shows it, so that its lifecycle plays the part of the missing
-                            laziness.
+                            UI shows it, behind an <code>&#64;if</code> or inside a
+                            <code>&#64;defer</code> block, so that its lifecycle plays the part of
+                            the missing laziness.
                         </li>
                     </ul>
                     <code-block [code]="snip.WORKAROUND_TS"></code-block>
