@@ -9,6 +9,7 @@ import {
     Resource,
     ResourceDependencyError,
     ResourceLoaderParams,
+    ResourceOptions,
     ResourceParamsContext,
     ResourceParamsStatus,
     ResourceRef,
@@ -24,6 +25,7 @@ import {
 import {
     consumerAfterComputation,
     consumerBeforeComputation,
+    consumerDestroy,
     producerAccessed,
     producerUpdateValueVersion,
     REACTIVE_NODE,
@@ -32,10 +34,10 @@ import {
     SIGNAL,
 } from "@angular/core/primitives/signals";
 import type { RxResourceOptions } from "@angular/core/rxjs-interop";
-import { Subscription } from "rxjs";
 
 /**
- * Like `rxResource`, but the request starts from being read rather than from an effect.
+ * `lazyResource` and `lazyRxResource`: like the native `resource` and `rxResource`, but the
+ * request starts from being read rather than from an effect.
  *
  * Angular's own resource schedules an effect at construction, so it fetches whether or not
  * anything displays it; the only way to hold it back is to feed it params it cannot use. Here
@@ -46,13 +48,33 @@ import { Subscription } from "rxjs";
  * Unlike an observable behind the async pipe, the answer outlives the reader: coming back to a
  * closed tab shows what was already loaded instead of downloading it again.
  *
- * Everything else mirrors the native `rxResource` contract: same options (`params` with `chain`
- * support, `stream` receiving `{params, abortSignal, previous}`, `defaultValue`, `equal`,
- * `injector`), same `ResourceRef` surface (`value` writable, `set`/`update` going `local`,
- * `reload`, `destroy`, `hasValue`), same status projection (`idle`/`loading`/`reloading`/
- * `resolved`/`local`/`error`). One deliberate improvement over native: a synchronous observable
- * resolves during the very read that started it, instead of a microtask later.
+ * Everything else mirrors the native contract: same options (`params` with `chain` support, a
+ * promise `loader` for `lazyResource` or a `stream` receiving `{params, abortSignal, previous}`
+ * for `lazyRxResource`, `defaultValue`, `equal`, `injector`), same `ResourceRef` surface
+ * (`value` writable, `set`/`update` going `local`, `reload`, `destroy`, `hasValue`), same status
+ * projection (`idle`/`loading`/`reloading`/`resolved`/`local`/`error`). One deliberate
+ * improvement over native: a synchronous source resolves during the very read that started it,
+ * instead of a microtask later.
  */
+export function lazyResource<T, R>(
+    options: ResourceOptions<T, R> & { defaultValue: NoInfer<T> },
+): ResourceRef<T>;
+export function lazyResource<T, R>(options: ResourceOptions<T, R>): ResourceRef<T | undefined>;
+export function lazyResource<T, R>(options: ResourceOptions<T, R>): ResourceRef<T | undefined> {
+    if (!options.injector) {
+        assertInInjectionContext(lazyResource);
+    }
+    if (!("loader" in options) || options.loader === undefined) {
+        throw new Error("lazyResource only supports a promise `loader`; for streams, use lazyRxResource.");
+    }
+    // The cast bridges the branded native types (WritableSignal brand, hasValue's `this`
+    // predicate) that userland cannot name; the class implements the full behavioral contract.
+    return new LazyResourceImpl<T, R>({
+        ...options,
+        connect: connectLoader(options.loader),
+    }) as unknown as ResourceRef<T | undefined>;
+}
+
 export function lazyRxResource<T, R>(
     options: RxResourceOptions<T, R> & { defaultValue: NoInfer<T> },
 ): ResourceRef<T>;
@@ -61,9 +83,10 @@ export function lazyRxResource<T, R>(options: RxResourceOptions<T, R>): Resource
     if (!options.injector) {
         assertInInjectionContext(lazyRxResource);
     }
-    // The cast bridges the branded native types (WritableSignal brand, hasValue's `this`
-    // predicate) that userland cannot name; the class implements the full behavioral contract.
-    return new LazyRxResourceImpl(options) as unknown as ResourceRef<T | undefined>;
+    return new LazyResourceImpl<T, R>({
+        ...options,
+        connect: connectStream(options.stream),
+    }) as unknown as ResourceRef<T | undefined>;
 }
 
 const UNSET = Symbol("unset");
@@ -83,8 +106,16 @@ interface LoaderState<T, R> {
     readonly stream: Signal<ResourceStreamItem<T | undefined>> | undefined;
 }
 
-class LazyRxResourceImpl<T, R> implements Resource<T | undefined> {
-    private readonly streamFn: RxResourceOptions<T, R>["stream"];
+interface LazyResourceInternalOptions<T, R> {
+    readonly params?: (ctx: ResourceParamsContext) => R;
+    readonly equal?: ValueEqualityFn<T>;
+    readonly defaultValue?: T;
+    readonly injector?: Injector;
+    readonly connect: Connect<T, R>;
+}
+
+class LazyResourceImpl<T, R> implements Resource<T | undefined> {
+    private readonly connect: Connect<T, R>;
     private readonly equal: ValueEqualityFn<T | undefined> | undefined;
     private readonly pendingTasks: PendingTasks;
     private readonly unregisterOnDestroy: () => void;
@@ -147,6 +178,10 @@ class LazyRxResourceImpl<T, R> implements Resource<T | undefined> {
                 const previousConsumer = consumerBeforeComputation(this.node);
                 try {
                     const extRequest = this.extRequest();
+                    // Record the pull before loading: a stream that synchronously reads back one
+                    // of the resource's own signals must not re-enter this computation.
+                    this.node.value = extRequest;
+                    this.node.version++;
                     // Starting the request is a side effect, and a synchronous stream resolves the
                     // state right here - hence outside the reactive context, and before consumers
                     // read the state, so this very pass already sees what a synchronous source
@@ -157,8 +192,6 @@ class LazyRxResourceImpl<T, R> implements Resource<T | undefined> {
                     } finally {
                         setActiveConsumer(consumer);
                     }
-                    this.node.value = extRequest;
-                    this.node.version++;
                 } finally {
                     consumerAfterComputation(this.node, previousConsumer);
                 }
@@ -174,9 +207,9 @@ class LazyRxResourceImpl<T, R> implements Resource<T | undefined> {
 
     private readonly isValueDefined: Signal<boolean>;
 
-    constructor(options: RxResourceOptions<T, R>) {
+    constructor(options: LazyResourceInternalOptions<T, R>) {
         this.paramsFn = options.params;
-        this.streamFn = options.stream;
+        this.connect = options.connect;
         this.equal = options.equal ? wrapEqualityFn(options.equal as ValueEqualityFn<T | undefined>) : undefined;
         const defaultValue = options.defaultValue;
 
@@ -193,7 +226,11 @@ class LazyRxResourceImpl<T, R> implements Resource<T | undefined> {
             asReadonly: () => value,
         }) as unknown as WritableSignal<T | undefined>;
 
-        this.status = computed(() => (this.pull(), projectStatusOfState(this.state())));
+        this.status = computed(() =>
+            // A destroyed resource stays idle: without this, a params change after destroy()
+            // would recompute the state to "loading" even though nothing will ever load.
+            this.destroyed ? "idle" : (this.pull(), projectStatusOfState(this.state())),
+        );
         this.error = computed(() => {
             this.pull();
             const streamValue = this.state().stream?.();
@@ -250,6 +287,7 @@ class LazyRxResourceImpl<T, R> implements Resource<T | undefined> {
     destroy(): void {
         this.destroyed = true;
         this.unregisterOnDestroy();
+        consumerDestroy(this.node);
         this.abortInProgressLoad();
         this.state.set({
             extRequest: { request: undefined, reload: 0 },
@@ -284,9 +322,9 @@ class LazyRxResourceImpl<T, R> implements Resource<T | undefined> {
         const abortSignal = controller.signal;
         const shouldDiscard = () => abortSignal.aborted || untracked(this.extRequest) !== extRequest;
 
-        // Mirrors native rxResource's observable bridge, without its promise indirection: the
-        // first settle publishes the stream (a synchronous source settles during this very call),
-        // later emissions flow through the same stream signal.
+        // Mirrors the native loaders' bridge, without its promise indirection: the first settle
+        // publishes the stream (a synchronous source settles during this very call), later
+        // emissions flow through the same stream signal.
         const stream = signal<ResourceStreamItem<T | undefined>>({ value: undefined });
         let settled = false;
         const settle = () => {
@@ -298,30 +336,33 @@ class LazyRxResourceImpl<T, R> implements Resource<T | undefined> {
             resolvePendingTask();
         };
 
-        let subscription: Subscription | undefined;
+        let teardown: (() => void) | void;
         const onAbort = () => {
             abortSignal.removeEventListener("abort", onAbort);
-            subscription?.unsubscribe();
+            teardown?.();
             settle();
         };
         abortSignal.addEventListener("abort", onAbort);
 
         try {
-            subscription = this.streamFn({
-                params: extRequest.request as Exclude<R, undefined>,
-                abortSignal,
-                previous: { status: previousStatus },
-            } as ResourceLoaderParams<R>).subscribe({
-                next: (value) => {
-                    stream.set({ value });
-                    settle();
+            teardown = this.connect(
+                {
+                    params: extRequest.request as Exclude<R, undefined>,
+                    abortSignal,
+                    previous: { status: previousStatus },
+                } as ResourceLoaderParams<R>,
+                {
+                    next: (value) => {
+                        stream.set({ value });
+                        settle();
+                    },
+                    fail: (error) => {
+                        stream.set({ error: encapsulateError(error) });
+                        settle();
+                    },
+                    done: () => settle(),
                 },
-                error: (error: unknown) => {
-                    stream.set({ error: encapsulateError(error) });
-                    settle();
-                },
-                complete: () => settle(),
-            });
+            );
         } catch (error) {
             stream.set({ error: encapsulateError(error) });
             settle();
@@ -337,11 +378,40 @@ class LazyRxResourceImpl<T, R> implements Resource<T | undefined> {
 }
 
 // Mark the pull node so devtools-style introspection sees a reactive producer, not a plain object.
-Object.defineProperty(LazyRxResourceImpl.prototype, SIGNAL, { value: undefined, writable: true });
+Object.defineProperty(LazyResourceImpl.prototype, SIGNAL, { value: undefined, writable: true });
 
 // ----------------------------
 // Internal helpers
 // ----------------------------
+
+interface ConnectSink<T> {
+    next(value: T): void;
+    fail(error: unknown): void;
+    done(): void;
+}
+
+/** Bridges one load attempt to its source; may return a teardown, run when the load is aborted. */
+type Connect<T, R> = (params: ResourceLoaderParams<R>, sink: ConnectSink<T>) => (() => void) | void;
+
+function connectLoader<T, R>(loader: (params: ResourceLoaderParams<R>) => PromiseLike<T>): Connect<T, R> {
+    return (params, sink) => {
+        loader(params).then(
+            (value) => sink.next(value),
+            (error: unknown) => sink.fail(error),
+        );
+    };
+}
+
+function connectStream<T, R>(stream: RxResourceOptions<T, R>["stream"]): Connect<T, R> {
+    return (params, sink) => {
+        const subscription = stream(params).subscribe({
+            next: (value) => sink.next(value),
+            error: (error: unknown) => sink.fail(error),
+            complete: () => sink.done(),
+        });
+        return () => subscription.unsubscribe();
+    };
+}
 
 const paramsContext: ResourceParamsContext = {
     chain: <T>(resource: Resource<T>): T => {

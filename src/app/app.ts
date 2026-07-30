@@ -210,7 +210,7 @@ import * as snip from "./snippets";
                         Gating the params on a "shown" flag is the workaround commonly found in
                         applications; it defers the first load but misses most of the sleeping
                         rules. I also tried driving core's private <code>loadEffect</code>: it
-                        gets much closer, but stalls at 33/39 and depends on two private fields,
+                        gets much closer, but stalls at 34/39 and depends on two private fields,
                         which is not something I would want anyone to ship. The only userland
                         shape that passes the whole suite is a reimplementation of the resource
                         machinery beside core, about 370 lines that have to follow core on every
@@ -381,7 +381,7 @@ import * as snip from "./snippets";
                         write can never wake the resource; <code>destroy()</code> tears the pull
                         node down, so a destroyed resource can never load again. Until it lands,
                         the same semantics is available as one userland file: copy
-                        <code>src/app/lazy-rx-resource.ts</code> out of this project.
+                        <code>src/app/lazy-resource.ts</code> out of this project.
                     </p>
                 </section>
 

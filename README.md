@@ -8,7 +8,7 @@ solution proposée, alternatives, cas d'usage joués, tests, implémentation.
 diff du fork est appliqué au bundle publié (`fesm2022/_resource-chunk.mjs` + le `.d.ts`) via
 **patch-package** (`patches/@angular+core+22.1.0.patch`, rejoué par le postinstall). Chaque
 figure exécute donc le natif `rxResource({ lazy: true })`. La version userland
-(`src/app/lazy-rx-resource.ts`) reste la copie verbatim de la référence, à recopier en attendant
+(`src/app/lazy-resource.ts`, exports `lazyResource` + `lazyRxResource`) reste la copie verbatim de la référence, à recopier en attendant
 que ça atterrisse — c'est l'« alternative 39/39 » du tableau.
 
 ## Lancer
@@ -42,6 +42,6 @@ liens « edit ↗ » apparaissent alors sur chaque figure et sur les pages de d�
 
 - **Native (la PR)** : branche `feat/lazy-resource` sur flo-dmtx/angular ; ici sous forme du
   patch `patches/@angular+core+22.1.0.patch`, mêmes hunks portés sur le bundle publié.
-- **Userland** : `src/app/lazy-rx-resource.ts`, copie verbatim de
-  `../lazy-resource/src/lazy-rx-resource.ts` (aucune modification locale — tout correctif se
+- **Userland** : `src/app/lazy-resource.ts`, copie verbatim de
+  `../lazy-resource/src/lazy-resource.ts` (aucune modification locale — tout correctif se
   fait là-bas puis se recopie ici).
