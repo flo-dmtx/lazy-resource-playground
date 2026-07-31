@@ -404,6 +404,19 @@ import * as snip from "./snippets";
                     <h2>Links</h2>
                     <ul class="rules">
                         <li>
+                            Support the proposal:
+                            <a
+                                href="https://github.com/angular/angular/issues/70036"
+                                rel="noopener"
+                                >feature request angular/angular#70036</a
+                            >, and the story behind it:
+                            <a
+                                href="https://dev.to/flodmtx/resource-lazy-true-the-laziness-we-lost-when-we-left-the-async-pipe-5e70"
+                                rel="noopener"
+                                >article on dev.to</a
+                            >.
+                        </li>
+                        <li>
                             Use it today, one file:
                             <a
                                 href="https://gist.github.com/flo-dmtx/e8c9ff69bec58adf85e902eab9f7d900"
@@ -427,7 +440,7 @@ import * as snip from "./snippets";
                                 >source on GitHub</a
                             >,
                             <a
-                                href="https://stackblitz.com/github/flo-dmtx/lazy-resource-playground"
+                                href="https://stackblitz.com/~/github.com/flo-dmtx/lazy-resource-playground"
                                 rel="noopener"
                                 >editable on StackBlitz</a
                             >.
