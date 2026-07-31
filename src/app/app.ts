@@ -26,6 +26,35 @@ import * as snip from "./snippets";
                         <code>resource(&#123; lazy: true &#125;)</code>: the loader waits for the
                         first read; what renders is what fetches.
                     </p>
+                    <p class="head-links">
+                        <a href="https://github.com/angular/angular/issues/70036" rel="noopener"
+                            >feature request #70036</a
+                        >
+                        ·
+                        <a
+                            href="https://dev.to/flodmtx/resource-lazy-true-the-laziness-we-lost-when-we-left-the-async-pipe-5e70"
+                            rel="noopener"
+                            >article</a
+                        >
+                        ·
+                        <a
+                            href="https://gist.github.com/flo-dmtx/e8c9ff69bec58adf85e902eab9f7d900"
+                            rel="noopener"
+                            >gist</a
+                        >
+                        ·
+                        <a
+                            href="https://github.com/flo-dmtx/angular/tree/feat/lazy-resource"
+                            rel="noopener"
+                            >native branch</a
+                        >
+                        ·
+                        <a
+                            href="https://stackblitz.com/~/github.com/flo-dmtx/lazy-resource-playground"
+                            rel="noopener"
+                            >StackBlitz</a
+                        >
+                    </p>
                 </header>
 
                 <section id="description">
@@ -537,6 +566,11 @@ import * as snip from "./snippets";
         .standfirst {
             font-size: 1.0625rem;
             color: var(--muted);
+        }
+
+        .head-links {
+            font-size: 0.8125rem;
+            color: var(--faint);
         }
 
         h2 {
