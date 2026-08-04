@@ -60,7 +60,7 @@ export class UserCard {
 
             <div class="card">
                 <header class="card-head">
-                    <h3>declared here, <code>lazy: true</code> <span class="tag">proposal</span></h3>
+                    <h3>declared here, <code>load: "whenTracked"</code> <span class="tag">proposal</span></h3>
                     <button class="ghost" (click)="panel.set(panel() === 'open' ? 'closed' : 'open')">
                         {{ panel() === "open" ? "Hide" : panel() === "closed" ? "Show again" : "Show" }}
                     </button>
@@ -99,7 +99,7 @@ export class LiftedDemo {
     readonly panel = signal<"never" | "open" | "closed">("never");
 
     readonly profile = rxResource({
-        lazy: true,
+        load: "whenTracked",
         params: () => 1,
         stream: ({ params }) =>
             fakeFetch(this.log, `/api/users/${params}?from=the-parent`, userById(params)),

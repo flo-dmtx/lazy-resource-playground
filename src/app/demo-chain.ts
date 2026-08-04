@@ -52,13 +52,13 @@ export class ChainDemo {
     readonly revealed = signal(false);
 
     readonly user = rxResource({
-        lazy: true,
+        load: "whenTracked",
         params: () => 3,
         stream: ({ params }) => fakeFetch(this.log, `/api/users/${params}`, userById(params)),
     });
 
     readonly posts = rxResource({
-        lazy: true,
+        load: "whenTracked",
         // chain() only returns once the dependency is resolved; until then it reports its status.
         params: (ctx) => ctx.chain(this.user)!.id,
         stream: ({ params }) =>

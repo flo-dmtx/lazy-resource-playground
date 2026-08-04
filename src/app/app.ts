@@ -10,6 +10,13 @@ import * as snip from "./snippets";
     template: `
         <div class="doc">
             <nav class="toc" aria-label="Contents">
+                <label class="version">
+                    <span>version</span>
+                    <select aria-label="Proposal version" #version (change)="openVersion(version.value)">
+                        <option value="v2">v2 — current</option>
+                        <option value="v1">v1 — outdated</option>
+                    </select>
+                </label>
                 <a href="#description">Description</a>
                 <a href="#solution">Proposed solution</a>
                 <a href="#alternatives">Alternatives</a>
@@ -21,10 +28,17 @@ import * as snip from "./snippets";
 
             <main>
                 <header class="head">
-                    <h1>A lazy option for Angular resources</h1>
+                    <h1>Lazy load strategies for Angular resources</h1>
                     <p class="standfirst">
-                        <code>resource(&#123; lazy: true &#125;)</code>: the loader waits for the
-                        first read; what renders is what fetches.
+                        <code>resource(&#123; load: 'whenTracked' &#125;)</code>: the loader waits
+                        for the first listener; what renders is what fetches.
+                    </p>
+                    <p class="aside">
+                        This page shows <strong>proposal v2</strong> (tracking-driven), reshaped by
+                        the discussion on the feature request. The issue body still describes v1
+                        (<code>lazy: true</code>, any read wakes); what changed and why is in the
+                        thread. The v1 page is frozen, demos included:
+                        <a href="v1/" rel="noopener">view the outdated v1 page</a>.
                     </p>
                     <p class="head-links">
                         <a href="https://github.com/angular/angular/issues/70036" rel="noopener"
@@ -44,7 +58,7 @@ import * as snip from "./snippets";
                         >
                         ·
                         <a
-                            href="https://github.com/flo-dmtx/angular/tree/feat/lazy-resource"
+                            href="https://github.com/flo-dmtx/angular/tree/feat/lazy-resource-v2"
                             rel="noopener"
                             >native branch</a
                         >
@@ -60,8 +74,8 @@ import * as snip from "./snippets";
                 <section id="description">
                     <h2>Description</h2>
                     <p>
-                        <strong>Context.</strong> For loading async data into a screen today, we
-                        have:
+                        <strong>Context.</strong> For loading async data into a screen, today
+                        there is:
                     </p>
                     <ul class="rules">
                         <li>
@@ -69,20 +83,19 @@ import * as snip from "./snippets";
                             <code>params</code> describe what to fetch, a loader fetches it, and
                             templates read the result through <code>value()</code>,
                             <code>status()</code> and the other signals. Loading is eager by
-                            design: it starts at construction, and runs again whenever the params
-                            change, whether something displays the data or not.
+                            design: it starts at construction and runs again on every params
+                            change, whether or not anything displays the data.
                         </li>
                         <li>
-                            <code>&#64;defer</code>: it defers a block of the view. The code chunk
-                            loads and the block renders on its trigger; it says nothing about
-                            data.
+                            <code>&#64;defer</code>: it defers a block of the view. On its trigger
+                            the chunk loads and the block renders; it says nothing about data.
                         </li>
                     </ul>
                     <p>As far as I know, nothing today defers the data itself.</p>
                     <p>
                         <strong>Problem.</strong> Not everything a screen declares is needed right
-                        away: detail panels, tabs, previews. With eager-only resources, we keep
-                        facing the same two options:
+                        away: detail panels, tabs, previews. With eager-only resources, there are
+                        two ways out, always the same two:
                     </p>
                     <ul class="rules">
                         <li>
@@ -90,21 +103,19 @@ import * as snip from "./snippets";
                             looked at;
                         </li>
                         <li>
-                            or push each request down into a component that only exists once the
-                            UI shows it, behind an <code>&#64;if</code> or inside a
-                            <code>&#64;defer</code> block, so that its lifecycle plays the part of
-                            the missing laziness.
+                            or push each request into a component that only exists once the UI
+                            shows it, behind an <code>&#64;if</code> or a <code>&#64;defer</code>,
+                            so its lifecycle stands in for the missing laziness.
                         </li>
                     </ul>
                     <code-block [code]="snip.WORKAROUND_TS"></code-block>
                     <p>
-                        The second option works, and it is what we do today, but it has real
+                        The second option works, and it is what I write today, but it has real
                         costs. The value dies with the component, so every recreation fetches
                         again. Data fetching scatters down the tree, away from the routes and
-                        services that own the screen. And some components exist for no other
-                        reason than wrapping a request. What seems to be missing is a resource
-                        that can be declared where the data belongs, yet does not evaluate until
-                        something actually reads it.
+                        services that own the screen, and some components exist only to wrap a
+                        request. What is missing is a resource declared where the data belongs,
+                        that does not load until something reads it.
                     </p>
                     <p>
                         <strong>Prior issue.</strong>
@@ -114,74 +125,158 @@ import * as snip from "./snippets";
                         asked for a <code>lazy</code> option and was closed with a clear position:
                         render-driven data fetching invites request waterfalls, and data is better
                         lifted up to routes. I agree with that concern. My point is that the
-                        waterfalls are already here, because deferring a fetch without a lazy
-                        primitive means tying it to a component lifecycle, which is render-driven
-                        fetching in its most fragile form. A lazy resource pulls in the opposite
-                        direction:
+                        waterfalls are already here: without a lazy primitive, deferring a fetch
+                        means tying it to a component lifecycle — render-driven fetching in its
+                        most fragile form. A lazy resource pulls in the opposite direction:
                     </p>
                     <ul class="rules">
                         <li>the declaration moves up, next to the rest of the screen's data;</li>
-                        <li>the trigger is the first read, and it fires only once;</li>
+                        <li>the trigger is the first listener, and it fires only once;</li>
                         <li>
-                            the loaded value outlives its readers, so showing the same UI again
+                            the loaded value outlives its listeners, so showing the same UI again
                             does not refetch.
                         </li>
                     </ul>
                     <p>
-                        The waterfall the issue worried about has nowhere to repeat. And since the
-                        option is opt-in, eager resources are left strictly untouched. It also
-                        composes with <code>&#64;defer</code> rather than competing with it: the
-                        deferred view brings the code, the lazy resource in the parent brings the
-                        data, and neither pays before the other needs it.
+                        The waterfall the issue worried about has nowhere to repeat, and since
+                        the option is opt-in, eager resources are strictly untouched. It composes
+                        with <code>&#64;defer</code> instead of competing with it: the deferred
+                        view brings the code, the lazy resource in the parent brings the data,
+                        and nothing is paid before it is needed.
                     </p>
                 </section>
 
                 <section id="solution">
                     <h2>Proposed solution</h2>
-                    <code-block [code]="snip.USAGE_TS"></code-block>
+                    <h3>The model</h3>
+                    <p>A resource is a reactive stream, and there are exactly two ways to consume one:</p>
                     <ul class="rules">
                         <li>
-                            The first read of any of its signals starts the load, and nothing else
-                            does. That includes <code>value()</code>, <code>status()</code>,
-                            <code>hasValue()</code>, and reads made inside
-                            <code>untracked()</code>.
+                            <strong>Listen to it</strong> — a live reactive context (a template or
+                            an effect, directly or through <code>computed</code>s) tracks one of
+                            its signals.
                         </li>
                         <li>
-                            While asleep, <code>params</code> changes are tracked but never
-                            fetched; the first read uses the latest value.
+                            <strong>Photograph it</strong> — any read outside a reactive context,
+                            including inside <code>untracked()</code>, returns the current state
+                            at that instant and starts nothing. A dormant resource truthfully
+                            reads <code>&#123;status: 'idle', value: defaultValue&#125;</code>, so
+                            <code>loading</code> only ever means a request is actually running.
+                        </li>
+                    </ul>
+                    <p>
+                        One invariant follows:
+                        <strong>no load ever runs while nothing tracks the resource.</strong>
+                    </p>
+                    <h3>The API</h3>
+                    <code-block [code]="snip.USAGE_TS"></code-block>
+                    <p>
+                        <code>load?: 'eager' | 'whenTracked' | 'whileTracked'</code>, defaulting
+                        to <code>'eager'</code>, which is the existing behavior, strictly
+                        untouched. No new methods and no new types: <code>ResourceRef</code> is
+                        unchanged, and this one option is the entire public API surface of the
+                        proposal.
+                    </p>
+                    <ul class="rules">
+                        <li>
+                            <code>'whenTracked'</code> — dormant until its first listener, and
+                            that listener starts the load. The settled value is retained when
+                            listeners leave, so showing the same UI again does not re-fetch, until
+                            <code>params</code> change and invalidate the value as usual.
                         </li>
                         <li>
-                            Writes never wake it: <code>set()</code> before any read goes
-                            <code>local</code> without fetching, and <code>reload()</code> defers
-                            the load to the next read.
-                        </li>
-                        <li>
-                            Once awake, it behaves exactly like an eager resource: same statuses,
-                            errors, cancellation and SSR stability. Combining <code>lazy</code>
-                            with <code>id</code> is documented as discouraged, since the hydration
-                            window has usually closed by the first read.
+                            <code>'whileTracked'</code> — lives exactly while listened to. The
+                            first listener starts the load; when the last listener leaves, any
+                            in-flight load is cancelled, the value is dropped (local values
+                            included) and the resource returns to <code>idle</code>. The next
+                            listener starts over. For data that should not outlive the screen
+                            showing it.
                         </li>
                     </ul>
                     <p>
                         In practice, here is the same hidden panel twice: a fetch wrapped in a
                         child component, which pays again on every recreation, next to a resource
-                        declared in the parent with <code>lazy: true</code>.
+                        declared in the parent with <code>load: "whenTracked"</code>.
                     </p>
                     <app-figure
                         name="lifted"
-                            [ts]="snip.LIFTED_TS"
+                        [ts]="snip.LIFTED_TS"
                         [tpl]="snip.LIFTED_TPL"
                     ></app-figure>
-                    <p class="aside">
-                        Why does every read wake it, even inside <code>untracked()</code>?
-                        Because otherwise <code>&#64;if (r.hasValue())</code> could stay false
-                        forever: nothing reactive changes, so no change detection cycle comes back
-                        to ask again. A non-waking <code>peek()</code> is left as a follow-up.
+                    <h3>Shared behavior, both strategies</h3>
+                    <ul class="rules">
+                        <li>
+                            <code>params</code> changes while dormant are tracked but never
+                            fetched, and the first listener uses the latest value. While listened
+                            to, the resource behaves exactly like an eager one: params refetch,
+                            <code>reload()</code>, statuses, errors, cancellation.
+                        </li>
+                        <li>
+                            <code>untracked(() => r.value())</code> is the way to inspect a lazy
+                            resource without waking it: reads inside <code>untracked()</code> are
+                            snapshots like any other non-reactive read, so a reactive context can
+                            consult the current state without becoming a listener.
+                        </li>
+                        <li>
+                            Writes never wake it. <code>set()</code> goes to <code>local</code>
+                            without loading, and a later listener does not overwrite that local
+                            value.
+                        </li>
+                        <li>
+                            <code>reload()</code> while dormant never starts a load. It returns
+                            <code>false</code> when nothing has ever been loaded, and on a
+                            retained settled value it invalidates that value and defers the
+                            refetch to the next listener, which is the same rule as dormant
+                            params: remembered now, fetched when someone listens.
+                        </li>
+                        <li>
+                            A dormant resource never affects application stability, so SSR does
+                            not wait for it — and combining a lazy strategy with <code>id</code>
+                            is documented as discouraged, since the hydration window has usually
+                            closed by the first listener.
+                        </li>
+                        <li>
+                            Composition is transparent. Wrapping a lazy resource
+                            (<code>resourceFromSnapshots</code>, <code>computed</code> chains,
+                            <code>params</code> chaining) stays dormant end to end, and listening
+                            to the wrapper wakes the source through every layer, because interest
+                            is the reactive graph's own liveness.
+                        </li>
+                    </ul>
+                    <h3>Why tracking and not reading</h3>
+                    <p>
+                        v1 woke the resource on any read. Two arguments changed my mind, both of
+                        them coming out of the discussion:
+                    </p>
+                    <ol class="rules">
+                        <li>
+                            <strong>The missing handle.</strong> A non-reactive read that triggers
+                            a load never benefits its caller: it returns <code>undefined</code>
+                            and nothing will ever notify it. A tracked read leaves a subscriber
+                            behind. Only when a read is tracked it is worth loading the value.
+                        </li>
+                        <li>
+                            <strong>The wrong primitive.</strong> I had sketched an imperative
+                            escape hatch returning a promise (<code>toPromise()</code>, the
+                            counterpart of the <code>loadValue()</code> suggested in the thread).
+                            But a promise is the primitive for one value and a resource is a
+                            stream: callers either want to react to it, which means being
+                            reactive, or want the data itself, in which case they can call the API
+                            their loader wraps. For the rare genuine need the existing bridges
+                            compose: <code>firstValueFrom(toObservable(...))</code>.
+                        </li>
+                    </ol>
+                    <p>
+                        With both gone, non-reactive reads have exactly one coherent meaning, a
+                        snapshot, and the API needs no <code>peek()</code> either, since a read
+                        outside a reactive context already is one by construction.
+                        <code>&#64;if (r.hasValue())</code> cannot deadlock, because a template
+                        read is a tracked read: it wakes the resource.
                     </p>
                     <p class="aside">
                         Two implementations exist: a
                         <a
-                            href="https://github.com/flo-dmtx/angular/tree/feat/lazy-resource"
+                            href="https://github.com/flo-dmtx/angular/tree/feat/lazy-resource-v2"
                             rel="noopener"
                             >PR-ready fork</a
                         >
@@ -191,12 +286,12 @@ import * as snip from "./snippets";
                             href="https://gist.github.com/flo-dmtx/e8c9ff69bec58adf85e902eab9f7d900"
                             rel="noopener"
                             ><code>lazyRxResource</code></a
-                        >, that can be copied until this lands. The demos on this page run the fork's
+                        >, to copy until this lands. The demos on this page run the fork's
                         change itself: the project pins <code>&#64;angular/core</code> and applies
                         the same diff to the published bundle through patch-package, so every
                         figure executes the native
-                        <code>rxResource(&#123; lazy: true &#125;)</code>. The
-                        <strong>lazy: true / lazyRxResource</strong> toggle in each figure
+                        <code>rxResource(&#123; load: '…' &#125;)</code>. The
+                        <strong>load: '…' / lazyRxResource</strong> toggle in each figure
                         switches the code tabs between the two syntaxes.
                     </p>
                 </section>
@@ -206,10 +301,11 @@ import * as snip from "./snippets";
                     <p>
                         Before proposing a change to core, I tried to obtain these semantics from
                         userland, on top of the public API. To compare the attempts I wrote a
-                        parameterized suite describing 39 observable behaviors of a lazy resource:
-                        the sleeping rules above, plus everything a native resource must keep
-                        doing once awake (statuses, errors, cancellation, SSR stability). Each
-                        attempt is scored against that suite.
+                        parameterized contract suite: the sleeping rules, plus everything a
+                        native resource must keep doing once awake (statuses, errors,
+                        cancellation, SSR stability) — 39 observable behaviors in v1 semantics,
+                        mirrored as 44 specs for v2. Each attempt is scored against the contract
+                        it targets.
                     </p>
                     <table class="bench">
                         <thead>
@@ -230,12 +326,12 @@ import * as snip from "./snippets";
                                     reimplement as new functions (<code>lazyResource</code>,
                                     <code>lazyRxResource</code>)
                                 </td>
-                                <td class="num">~370</td>
-                                <td class="num good">39/39</td>
+                                <td class="num">~560</td>
+                                <td class="num good">44/44</td>
                             </tr>
                             <tr class="native-row">
                                 <td>the native option (this proposal)</td>
-                                <td class="num">~90</td>
+                                <td class="num">~210</td>
                                 <td class="num good">by construction</td>
                             </tr>
                         </tbody>
@@ -243,14 +339,25 @@ import * as snip from "./snippets";
                     <p class="aside">
                         Gating the params on a "shown" flag is the workaround commonly found in
                         applications; it defers the first load but misses most of the sleeping
-                        rules. I also tried driving core's private <code>loadEffect</code>: it
-                        gets much closer, but stalls at 34/39 and depends on two private fields,
-                        which is not something I would want anyone to ship. The only userland
-                        shape that passes the whole suite is a reimplementation of the resource
-                        machinery beside core, about 370 lines that have to follow core on every
-                        release. The same semantics fits in about 90 lines inside
-                        <code>ResourceImpl</code>, and that difference is why I am proposing the
-                        option upstream. The reimplementation is published as a
+                        rules (18/39 on the v1 suite). I also tried driving core's private
+                        <code>loadEffect</code>: it gets much closer, but stalls at 34/39 and
+                        depends on two private fields, which is not something I would want anyone
+                        to ship. The only userland shape that passes a whole contract is a
+                        reimplementation of the resource machinery beside core — today about 560
+                        lines implementing v2, green on a 44-spec mirror of the branch's suite —
+                        that has to follow core on every release. The same semantics fits in
+                        about 210 lines inside core, graph hooks included, and that difference is
+                        why I am proposing the option upstream.
+                    </p>
+                    <p class="aside">
+                        For v2 the argument got sharper. The reimplementation now implements the
+                        v2 contract (a dedicated 44-spec suite mirrors the branch's), but its
+                        trigger has to be stolen: "the first live consumer arrived / the last one
+                        left" is the reactive graph's private bookkeeping, with no public API. The
+                        twin observes it by turning the <code>consumers</code> field of its own
+                        node into an accessor property — it works and it is tested, but nothing
+                        contracts Angular to keep that bookkeeping, which is precisely the case
+                        for core support. It is published as a
                         <a
                             href="https://gist.github.com/flo-dmtx/e8c9ff69bec58adf85e902eab9f7d900"
                             rel="noopener"
@@ -296,13 +403,35 @@ import * as snip from "./snippets";
                     </div>
 
                     <div class="case">
+                        <p class="case-tag">new in v2</p>
+                        <h3>A value that should not outlive its screen</h3>
+                        <p>
+                            Same resource, two strategies. With <code>whenTracked</code> a single
+                            panel is enough to show the point: closing it keeps the reading, and
+                            reopening shows the same value, for free.
+                            <code>whileTracked</code> lives exactly while listened to, and two
+                            panels read it here — opening either one wakes it, and closing one
+                            while the other stays open costs nothing. Closing the last one
+                            abandons the resource: an in-flight request is cancelled, watch the
+                            network log, a settled value is dropped, and the next open starts from
+                            cold with a fresh measurement.
+                        </p>
+                        <app-figure
+                            name="reset"
+                            [ts]="snip.WHILE_TRACKED_TS"
+                            [tpl]="snip.WHILE_TRACKED_TPL"
+                        ></app-figure>
+                    </div>
+
+                    <div class="case">
                         <p class="case-tag">advanced</p>
                         <h3>One resource depending on another</h3>
                         <p>
                             <code>posts</code> needs the id that <code>user</code> will resolve.
-                            Both stay asleep until one button reads the end of the chain; then
+                            Both stay asleep until one button displays the end of the chain; then
                             they wake in order, never in parallel: watch the two requests leave
-                            one after the other. <code>computed()</code> composes the same way.
+                            one after the other. Liveness propagates through the reactive graph,
+                            so <code>computed()</code> and wrappers compose the same way.
                         </p>
                         <app-figure
                             name="chain"
@@ -313,14 +442,14 @@ import * as snip from "./snippets";
 
                     <div class="case">
                         <p class="case-tag">edge cases</p>
-                        <h3>Writes and errors on a never-read resource</h3>
+                        <h3>Writes and errors on a never-displayed resource</h3>
                         <p>
-                            Nothing in either card reads its resource until you press
-                            <em>read it</em>; that press is the first read. One card calls
+                            Nothing in either card displays its resource until you press
+                            <em>display it</em>; that render is the first listener. One card calls
                             <code>set()</code> and <code>reload()</code> before that: the network
                             stays empty, and the action log shows what each call returned. The
                             other card holds a loader that throws: it only gets to throw once
-                            something reads it, and <code>set()</code> recovers from the error.
+                            something listens, and <code>set()</code> recovers from the error.
                         </p>
                         <app-figure
                             name="contract"
@@ -334,8 +463,9 @@ import * as snip from "./snippets";
                     <h2>Tests</h2>
                     <ul class="facts">
                         <li>
-                            <span class="fact-num">91/91</span> on
-                            <code>//packages/core/test/resource</code>: the new lazy suite, plus
+                            <span class="fact-num">109/109</span> on
+                            <code>//packages/core/test/resource</code>: the lazy suite rewritten
+                            for v2 (43 specs, the shared contract run for both strategies), plus
                             every pre-existing spec passing unchanged
                         </li>
                         <li>
@@ -343,8 +473,9 @@ import * as snip from "./snippets";
                             including <code>rx_resource_spec</code>
                         </li>
                         <li>
-                            <span class="fact-num">✓</span> public API goldens verified with the
-                            repo's own tooling
+                            <span class="fact-num">✓</span> <code>signals</code> and
+                            <code>render3</code> primitives suites (the two graph hooks), and
+                            public API goldens, verified with the repo's own tooling
                         </li>
                     </ul>
                     <details class="test-list">
@@ -367,13 +498,19 @@ import * as snip from "./snippets";
                 <section id="implementation">
                     <h2>Implementation</h2>
                     <p>
-                        One commit on
+                        A single commit on
+                        <a
+                            href="https://github.com/flo-dmtx/angular/tree/feat/lazy-resource-v2"
+                            rel="noopener"
+                            >flo-dmtx/angular</a
+                        >, rebased on current main — v1 keeps
                         <a
                             href="https://github.com/flo-dmtx/angular/tree/feat/lazy-resource"
                             rel="noopener"
-                            >flo-dmtx/angular</a
-                        >: 129 lines in <code>resource.ts</code>, 15 in <code>api.ts</code>, a
-                        500-line spec, and the documentation. It reads in four steps:
+                            >its own branch</a
+                        >, so the two designs stay side by side. The v2 shape: 22 lines in
+                        <code>graph.ts</code>, ~190 in <code>resource.ts</code>, the option in
+                        <code>api.ts</code>, a 577-line spec. It reads in four steps:
                     </p>
 
                     <div class="step">
@@ -387,40 +524,49 @@ import * as snip from "./snippets";
                     </div>
 
                     <div class="step">
-                        <h3>2 · When lazy, the load effect is not created</h3>
+                        <h3>2 · Two hooks the graph already knows how to fire</h3>
                         <p>
-                            The boolean becomes a <code>loadStrategy</code> at the constructor's
-                            single call site, since a positional bare <code>true</code> would say
-                            nothing, and it defaults to eager for the internals that never pass it.
-                            In lazy mode a reactive pull node is built instead of the load effect.
+                            The reactive graph maintains, for every producer, the list of its live
+                            consumers. Two optional hooks surface the transitions of that list —
+                            they mirror the <code>watched</code>/<code>unwatched</code> callbacks
+                            of the TC39 Signals proposal, so this is infrastructure Angular will
+                            likely want anyway.
+                        </p>
+                        <code-block [code]="snip.HOOKS_DIFF" [diff]="true"></code-block>
+                    </div>
+
+                    <div class="step">
+                        <h3>3 · The load effect only exists while listened to</h3>
+                        <p>
+                            In a lazy strategy, a passive tracking node replaces the load effect
+                            at construction. Its <code>watched</code> transition creates the
+                            effect — the only place a load ever starts — and its
+                            <code>unwatched</code> transition tears it down, cancelling any
+                            in-flight request.
                         </p>
                         <code-block [code]="snip.CONSTRUCT_DIFF" [diff]="true"></code-block>
+                        <code-block [code]="snip.WAKE_SLEEP_TS"></code-block>
                     </div>
 
                     <div class="step">
-                        <h3>3 · The pull node</h3>
+                        <h3>4 · Tracking is the trigger</h3>
                         <p>
-                            It tracks the wrapped request, and recomputing is where the load
-                            starts: on the first pull, then on params and reload changes.
-                        </p>
-                        <code-block [code]="snip.PULL_NODE_TS"></code-block>
-                    </div>
-
-                    <div class="step">
-                        <h3>4 · Reading is the trigger</h3>
-                        <p>
-                            <code>value</code>, <code>status</code> and <code>error</code> pull
-                            the node; every other signal derives from those.
+                            Every public signal registers the tracking node as a dependency, so a
+                            listener's liveness reaches it through any depth of computeds — that
+                            is what makes composition work. A read outside a reactive context
+                            registers nothing, so wakes nothing, and a dormant resource reports
+                            the truth: <code>idle</code>.
                         </p>
                         <code-block [code]="snip.READS_DIFF" [diff]="true"></code-block>
                     </div>
 
                     <p>
-                        Two supporting changes come with it: <code>set()</code> now reads the raw state, so a
-                        write can never wake the resource; <code>destroy()</code> tears the pull
-                        node down, so a destroyed resource can never load again. Until it lands,
-                        the same semantics is available as one userland file: copy
-                        <code>src/app/lazy-resource.ts</code> out of this project, or grab it from
+                        Two supporting changes come with it: <code>set()</code> reads the raw
+                        state, so a write can never wake the resource; <code>destroy()</code>
+                        tears the tracking node down, so a destroyed resource can never load
+                        again. Until it lands, the same semantics is available as one userland
+                        file: copy <code>src/app/lazy-resource.ts</code> out of this project, or
+                        grab it from
                         <a
                             href="https://gist.github.com/flo-dmtx/e8c9ff69bec58adf85e902eab9f7d900"
                             rel="noopener"
@@ -456,9 +602,9 @@ import * as snip from "./snippets";
                         <li>
                             The native implementation, tested with the repo's own suite:
                             <a
-                                href="https://github.com/flo-dmtx/angular/tree/feat/lazy-resource"
+                                href="https://github.com/flo-dmtx/angular/tree/feat/lazy-resource-v2"
                                 rel="noopener"
-                                >branch <code>feat/lazy-resource</code></a
+                                >branch <code>feat/lazy-resource-v2</code></a
                             >.
                         </li>
                         <li>
@@ -524,6 +670,7 @@ import * as snip from "./snippets";
             position: fixed;
             top: 3.25rem;
             right: max(1rem, calc(50vw - 27rem - 11rem));
+            width: 9.5rem;
             display: grid;
             gap: 0.375rem;
             font-size: 0.78125rem;
@@ -536,6 +683,33 @@ import * as snip from "./snippets";
 
         .toc a:hover {
             color: var(--text);
+        }
+
+        .toc .version {
+            display: grid;
+            gap: 0.3125rem;
+            padding-bottom: 0.875rem;
+            margin-bottom: 0.5rem;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .toc .version span {
+            font-family: var(--mono);
+            font-size: 0.65rem;
+            text-transform: uppercase;
+            letter-spacing: 0.12em;
+            color: var(--faint);
+        }
+
+        .toc .version select {
+            font-family: var(--mono);
+            font-size: 0.71875rem;
+            color: var(--text);
+            background: var(--surface);
+            border: 1px solid var(--border-strong);
+            border-radius: var(--radius-sm);
+            padding: 0.35rem 0.5rem;
+            width: 100%;
         }
 
         @media (max-width: 78rem) {
@@ -583,6 +757,11 @@ import * as snip from "./snippets";
         }
 
         /* solution */
+
+        #solution h3 {
+            font-size: 1rem;
+            margin-top: 0.375rem;
+        }
 
         .rules {
             display: grid;
@@ -800,68 +979,60 @@ import * as snip from "./snippets";
 export class App {
     readonly snip = snip;
     readonly tests = TESTS;
+
+    openVersion(version: string): void {
+        if (version === "v1") {
+            location.href = "v1/";
+        }
+    }
 }
 
 /** The `it()` names of resource_lazy_spec.ts, verbatim. */
 const TESTS = [
     {
-        name: "waking",
+        name: "shared lazy contract — run for both 'whenTracked' and 'whileTracked'",
         specs: [
-            "should not load at creation and should load on the first read",
-            "should wake from a read of any of its signals",
-            "should resolve during the waking read when the stream settles synchronously",
-            "should return the defaultValue from the read that wakes it",
+            "should not load at creation",
+            "should not wake from reads outside a reactive context",
+            "should wake when an effect starts tracking it",
+            "should wake when a template renders it",
+            "should not deadlock behind a hasValue() guard",
+            "should never fetch params changes while dormant, then use the latest",
+            "should react to params changes while tracked",
+            "should stay dormant behind a computed until a listener reads the computed",
+            "should keep a local value set before any listener, without loading",
+            "should refuse reload() while dormant",
+            "should surface a rejected loader through the listener",
+            "should abort the in-flight load when the params change while tracked",
+            "should return the defaultValue while dormant and while loading",
+            "should never load once destroyed, even with a listener",
+            "should chain laziness: listening to the parent wakes the chain in order",
+            "should compose through resourceFromSnapshots: listening to the wrapper wakes the source",
+            "should keep the application stable while dormant",
         ],
     },
     {
-        name: "params",
+        name: "retention (load: 'whenTracked')",
         specs: [
-            "should not load on params changes while unread, then should use the latest params",
-            "should not reload when re-read with unchanged params",
-            "should react to params changes after waking",
-            "should keep updating a template that reads it when the params change",
-            "should stay idle while the params are undefined and load once they are set",
-            "should abort the in-flight load when the params change",
+            "should keep the value when the last listener leaves, and not refetch on the next one",
+            "should defer params changes while untracked to the next listener",
         ],
     },
     {
-        name: "errors & stability",
+        name: "reset (load: 'whileTracked')",
         specs: [
-            "should surface a rejected loader through error, status, hasValue and value",
-            "should keep the application stable while unread",
-        ],
-    },
-    {
-        name: "writes",
-        specs: [
-            "should never load when set() is called before any read",
-            "should not load when equal set() calls deduplicate before any read",
-            "should replace a local value with a fresh load when the params change",
-            "should not initiate a load from reload() before any read",
-            "should defer the load requested by reload() to the next read",
-        ],
-    },
-    {
-        name: "destroy",
-        specs: [
-            "should leave a destroyed resource idle without ever loading",
-            "should not load when the params change after destroy()",
-            "should abort the in-flight load when destroyed after waking",
-        ],
-    },
-    {
-        name: "composition",
-        specs: [
-            "should stay asleep behind a computed until the computed itself is read",
-            "should chain laziness through ctx.chain",
-            "should propagate a chained child error to the lazy parent",
+            "should drop the value and return to idle when the last listener leaves",
+            "should cancel the in-flight load and forget when abandoned mid-load",
+            "should keep the value while at least one listener remains",
+            "should also drop a local value on abandon",
+            "should re-derive a params error after abandon instead of blanking it",
         ],
     },
     {
         name: "the eager path, unchanged",
         specs: [
-            "should load eagerly when lazy is not set",
-            "should load eagerly when lazy is explicitly false",
+            "should load eagerly when load is not set",
+            "should load eagerly when load is explicitly 'eager'",
         ],
     },
 ];

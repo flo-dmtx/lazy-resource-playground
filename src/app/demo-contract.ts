@@ -14,7 +14,7 @@ import { RequestLog } from "./request-log";
                     @if (awake()) {
                         <span class="badge" [attr.data-status]="profile.status()">{{ profile.status() }}</span>
                     } @else {
-                        <span class="tag">unread</span>
+                        <span class="tag">untracked</span>
                     }
                 </header>
 
@@ -22,7 +22,7 @@ import { RequestLog } from "./request-log";
                     <button class="ghost" (click)="setDraft()">set(draft)</button>
                     <button class="ghost" (click)="callReload()">reload()</button>
                     @if (!awake()) {
-                        <button class="primary" (click)="awake.set(true)">read it</button>
+                        <button class="primary" (click)="awake.set(true)">display it</button>
                     }
                 </div>
 
@@ -40,8 +40,8 @@ import { RequestLog } from "./request-log";
                     }
                 } @else if (actions().length === 0) {
                     <p class="void">
-                        Nothing in this card reads the resource yet. Try the writes: the network
-                        will not move.
+                        Nothing in this card displays the resource yet. Try the writes: the
+                        network will not move.
                     </p>
                 }
 
@@ -60,13 +60,13 @@ import { RequestLog } from "./request-log";
                     @if (awakeFlaky()) {
                         <span class="badge" [attr.data-status]="flaky.status()">{{ flaky.status() }}</span>
                     } @else {
-                        <span class="tag">unread</span>
+                        <span class="tag">untracked</span>
                     }
                 </header>
 
                 @if (!awakeFlaky()) {
                     <div class="controls">
-                        <button class="primary" (click)="awakeFlaky.set(true)">read it</button>
+                        <button class="primary" (click)="awakeFlaky.set(true)">display it</button>
                     </div>
                     <p class="void">A 503 waiting to happen. Asleep, it cannot even fail.</p>
                 } @else {
@@ -104,13 +104,13 @@ export class ContractDemo {
     readonly draft: User = { id: 0, name: "Local draft", role: "never saved", email: "—" };
 
     readonly profile = rxResource({
-        lazy: true,
+        load: "whenTracked",
         params: () => 2,
         stream: ({ params }) => fakeFetch(this.log, `/api/users/${params}`, userById(params)),
     });
 
     readonly flaky = rxResource<User, number>({
-        lazy: true,
+        load: "whenTracked",
         params: () => 9,
         stream: ({ params }) =>
             failingFetch(this.log, `/api/users/${params}`, "503 — user store unavailable"),
@@ -121,7 +121,7 @@ export class ContractDemo {
         this.note(
             this.awake()
                 ? "set(draft): local value, cancels any in-flight load"
-                : "set(draft): still unread, no request",
+                : "set(draft): still untracked, no request",
         );
     }
 
@@ -131,8 +131,8 @@ export class ContractDemo {
             accepted
                 ? this.awake()
                     ? "reload() → true, reloading now"
-                    : "reload() → true, deferred to the next read"
-                : "reload() → false, never read so nothing to re-run",
+                    : "reload() → true, deferred to the next listener"
+                : "reload() → false, nothing ever loaded so nothing to re-run",
         );
     }
 

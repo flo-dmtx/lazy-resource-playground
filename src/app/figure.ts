@@ -51,7 +51,7 @@ export const codeSyntax = signal<"proposal" | "userland">("proposal");
                         [class.on]="codeSyntax() === 'proposal'"
                         (click)="codeSyntax.set('proposal')"
                     >
-                        lazy: true
+                        load: '…'
                     </button>
                     <button
                         [class.on]="codeSyntax() === 'userland'"
@@ -232,7 +232,15 @@ export class Figure {
     }
 }
 
-/** The userland syntax is the proposal one minus the option, on the dedicated function. */
+/**
+ * The userland syntax is the proposal one on the dedicated function: `whenTracked` is its
+ * default and disappears, `whileTracked` stays as the same option.
+ */
 function toUserland(ts: string): string {
-    return ts.replace(/\brxResource(<[^>]*>)?\(\{\n(\s*)lazy: true,\n/g, "lazyRxResource$1({\n");
+    return ts
+        .replace(/\brxResource(<[^>]*>)?\(\{\n(\s*)load: "whenTracked",\n/g, "lazyRxResource$1({\n")
+        .replace(
+            /\brxResource(<[^>]*>)?\(\{\n(\s*)load: "whileTracked",\n/g,
+            'lazyRxResource$1({\n$2load: "whileTracked",\n',
+        );
 }

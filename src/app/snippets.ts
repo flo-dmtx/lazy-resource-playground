@@ -5,12 +5,14 @@
  */
 
 export const USAGE_TS = `readonly user = resource({
-    lazy: true,                                  // the only new line
+    load: "whenTracked",                         // the only new line
     params: () => this.userId(),
     loader: ({ params }) => fetchUser(params),
 });
 
-// rxResource({ lazy: true, ... }) inherits it, no other change`;
+// load: "whileTracked" also exists: same trigger, but the value
+// is dropped when the last listener leaves.
+// rxResource({ load: ..., ... }) inherits both, no other change`;
 
 export const WORKAROUND_TS = `// this component exists to defer one fetch
 class UserCard {
@@ -37,7 +39,7 @@ class UserCard {
 
 // lifted: declared up here, deferred by laziness
 readonly profile = rxResource({
-    lazy: true,
+    load: "whenTracked",
     params: () => 1,
     stream: ({ params }) => api.user(params),
 });`;
@@ -48,13 +50,13 @@ export const LIFTED_TPL = `@if (showCard()) {
 }
 
 @if (showPanel()) {
-    <!-- first read fetches once; reopening is free -->
+    <!-- the first listener fetches once; reopening is free -->
     @let user = profile.value();
     <dl>... {{ user.name }} ...</dl>
 }`;
 
 export const TABS_TS = `readonly comments = rxResource({
-    lazy: true,
+    load: "whenTracked",
     params: () => 42,
     stream: ({ params }) => api.comments(params),
 });
@@ -71,7 +73,7 @@ export const TABS_TPL = `@switch (tab()) {
 export const PARAMS_TS = `readonly userId = signal(1);
 
 readonly selected = rxResource({
-    lazy: true,
+    load: "whenTracked",
     // tracked while asleep, live once awake
     params: () => this.userId(),
     stream: ({ params }) => api.user(params),
@@ -82,24 +84,43 @@ export const PARAMS_TPL = `<select (change)="userId.set(+picker.value)">
 </select>
 
 @if (open()) {
-    <!-- the open panel reads it: from here on,
+    <!-- the open panel listens: from here on,
          a params change re-fetches -->
     @let user = selected.value();
     ...
 } @else {
-    <!-- nothing reads it: params changes are
+    <!-- nothing listens: params changes are
          remembered, the network stays idle -->
     <p>Panel closed.</p>
 }`;
 
+export const WHILE_TRACKED_TS = `readonly reading = rxResource({
+    load: "whileTracked",
+    params: () => "sensor-4",
+    stream: ({ params }) => api.reading(params),
+});
+// lives exactly while listened to: the LAST listener
+// leaving cancels the load and drops the value`;
+
+export const WHILE_TRACKED_TPL = `<!-- two listeners, one resource, one request -->
+@if (panelA()) {
+    {{ reading.value() }}
+}
+@if (panelB()) {
+    <!-- closing A alone changes nothing: B still
+         listens. closing the last panel forgets;
+         mid-flight, it aborts the request -->
+    {{ reading.value() }}
+}`;
+
 export const CHAIN_TS = `readonly user = rxResource({
-    lazy: true,
+    load: "whenTracked",
     params: () => 3,
     stream: ({ params }) => api.user(params),
 });
 
 readonly posts = rxResource({
-    lazy: true,
+    load: "whenTracked",
     // chain() waits for user to resolve
     params: (ctx) => ctx.chain(this.user)!.id,
     stream: ({ params }) => api.posts(params),
@@ -110,13 +131,13 @@ export const CHAIN_TPL = `<button (click)="revealed.set(true)">
 </button>
 
 @if (revealed()) {
-    <!-- the only read on the page: wakes user,
-         then posts, in order, never in parallel -->
+    <!-- the template tracks the end of the chain:
+         user wakes, then posts, never in parallel -->
     {{ posts.value() }}
 }`;
 
 export const CONTRACT_TS = `readonly profile = rxResource({
-    lazy: true,
+    load: "whenTracked",
     params: () => 2,
     stream: ({ params }) => api.user(params),
 });
@@ -126,55 +147,68 @@ export const CONTRACT_TS = `readonly profile = rxResource({
 // → status 'local', the loader never runs
 profile.set(draft);
 
-// → returns false before any read;
-//   the load waits for the next read
+// → returns false: nothing ever loaded,
+//   so there is nothing to re-run
 profile.reload();`;
 
-export const CONTRACT_TPL = `@if (awake()) {
-    <!-- these are the first reads -->
+export const CONTRACT_TPL = `@if (shown()) {
+    <!-- this render is the first listener -->
     <span class="badge">{{ profile.status() }}</span>
     {{ profile.value()?.name }}
 } @else {
-    <button (click)="awake.set(true)">
-        read it
+    <button (click)="shown.set(true)">
+        display it
     </button>
 }`;
 
-/* ---- implementation section: condensed from the real diff (commit ade5b9e) ---- */
+/* ---- implementation section: condensed from the real diff (branch feat/lazy-resource-v2) ---- */
 
 export const API_DIFF = ` export interface BaseResourceOptions<T, R> {
    ...
 +  /**
-+   * Whether the resource defers loading until the first
-+   * time one of its signals is read.
-+   * Defaults to \`false\`.
++   * When the resource loads: eagerly at creation
++   * (the default), or driven by being tracked.
 +   */
-+  lazy?: boolean;
++  load?: 'eager' | 'whenTracked' | 'whileTracked';
  }`;
 
-export const CONSTRUCT_DIFF = ` export function resource<T, R>(options) {
-   return new ResourceImpl<T, R>(
-     ...
-+    options.lazy ? 'lazy' : 'eager',
-   );
+export const HOOKS_DIFF = ` export interface ReactiveNode {
+   ...
++  /** This producer gained its first live consumer.
++   *  Mirrors TC39 Signals' \`watched\`. */
++  producerOnWatched?(node: unknown): void;
++
++  /** This producer lost its last live consumer.
++   *  Mirrors TC39 Signals' \`unwatched\`. */
++  producerOnUnwatched?(node: unknown): void;
  }
 
- constructor(
+ function producerAddLiveConsumer(node, link) {
    ...
-+  loadStrategy: 'eager' | 'lazy' = 'eager',
++  if (consumersTail === undefined) {
++    node.producerOnWatched?.(node);
++  }
+ }
+
+ function producerRemoveLiveConsumerLink(link) {
+   ...
++  if (nextConsumer === undefined) {
++    producer.producerOnUnwatched?.(producer);
++  }
+ }`;
+
+export const CONSTRUCT_DIFF = ` constructor(
+   ...
++  loadStrategy: ResourceLoadStrategy = 'eager',
  ) {
    ...
--  this.effectRef = effect(this.loadEffect.bind(this), {
--    injector,
--    manualCleanup: true,
--  });
-+  if (loadStrategy === 'lazy') {
-+    const node = Object.create(RESOURCE_PULL_NODE);
-+    node.readExtRequest = () => this.extRequest();
-+    node.load = () => {
-+      if (!this.destroyed) this.loadEffect();
-+    };
-+    this.pullNode = node;
++  this.awake = signal(loadStrategy === 'eager');
++  if (loadStrategy !== 'eager') {
++    const node = Object.create(RESOURCE_TRACK_NODE);
++    node.producerOnWatched = () => this.scheduleWake();
++    node.producerOnUnwatched = () =>
++      this.scheduleSleep(loadStrategy === 'whileTracked');
++    this.trackNode = node;
 +  } else {
 +    this.effectRef = effect(this.loadEffect.bind(this), {
 +      injector,
@@ -182,39 +216,60 @@ export const CONSTRUCT_DIFF = ` export function resource<T, R>(options) {
 +    });
 +  }`;
 
-export const PULL_NODE_TS = `const RESOURCE_PULL_NODE = {
-  ...REACTIVE_NODE,
-  value: UNSET_PULL,
-  dirty: true,
-  // a node that has never computed must compute on the first pull
-  producerMustRecompute: (node) => node.value === UNSET_PULL,
-  producerRecomputeValue: (node) => {
-    // track extRequest: a params change re-dirties the node
-    const prev = consumerBeforeComputation(node);
-    try {
-      // record the pull before loading, so a loader that
-      // reads the resource back cannot re-enter
-      node.value = node.readExtRequest();
-      node.version++;
-      // the load runs untracked: it is the side effect
-      node.load();
-    } finally {
-      consumerAfterComputation(node, prev);
+export const WAKE_SLEEP_TS = `// the first listener arrived: create the load effect —
+// the only place a load ever starts
+private scheduleWake(): void {
+  queueMicrotask(() => {
+    if (this.destroyed || untracked(this.awake) ||
+        this.trackNode.consumers === undefined) return;
+    this.awake.set(true);
+    this.loadEffectRef = effect(this.loadEffect.bind(this),
+      { injector: this.injector, manualCleanup: true });
+  });
+}
+
+// the last listener left: no load may run unlistened,
+// so the effect goes down and the flight is aborted
+private scheduleSleep(dropValue: boolean): void {
+  queueMicrotask(() => {
+    if (this.destroyed || !untracked(this.awake) ||
+        this.trackNode.consumers !== undefined) return;
+    this.loadEffectRef?.destroy();
+    this.abortInProgressLoad();
+    this.awake.set(false);
+    if (dropValue) {
+      // whileTracked: forget = recompute the state from
+      // the current request as if fresh, no history —
+      // an abandoned resource is indistinguishable from
+      // one that never loaded
+      this.state.set(computeState(
+        untracked(this.extRequest), undefined, undefined));
     }
-  },
-};`;
+  });
+}`;
 
 export const READS_DIFF = ` readonly value = computed(() => {
-+  this.pull();
++  this.track();
    return projectValueOfState(this.state());
  });
 
-+private pull(): void {
-+  if (this.pullNode === undefined || this.destroyed) {
++// registers the tracking node as a dependency of the
++// calling reactive context; a read outside any live
++// context registers nothing, so wakes nothing
++private track(): void {
++  if (this.trackNode === undefined || this.destroyed) {
 +    return;
 +  }
-+  // recompute if the params moved while asleep
-+  producerUpdateValueVersion(this.pullNode);
-+  // and keep following them from now on
-+  producerAccessed(this.pullNode);
-+}`;
++  producerAccessed(this.trackNode);
++}
+
+ readonly status = computed(() => {
++  this.track();
+   const status = projectStatusOfState(this.state());
++  // dormant: no load is actually running — report the
++  // truth, not the load that listening would start
++  if (!this.awake() && status === 'loading') {
++    return 'idle';
++  }
+   return status;
+ });`;

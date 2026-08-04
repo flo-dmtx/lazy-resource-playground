@@ -82,7 +82,7 @@ export class TabsDemo {
     readonly tab = signal<TabId | null>(null);
 
     readonly overview = rxResource({
-        lazy: true,
+        load: "whenTracked",
         params: () => 42,
         stream: ({ params }) =>
             fakeFetch(this.log, `/api/posts/${params}`, {
@@ -93,7 +93,7 @@ export class TabsDemo {
     });
 
     readonly comments = rxResource({
-        lazy: true,
+        load: "whenTracked",
         params: () => 42,
         stream: ({ params }) =>
             fakeFetch(this.log, `/api/posts/${params}/comments`, [
@@ -104,7 +104,7 @@ export class TabsDemo {
     });
 
     readonly activity = rxResource({
-        lazy: true,
+        load: "whenTracked",
         params: () => 42,
         stream: ({ params }) =>
             fakeFetch(this.log, `/api/posts/${params}/activity`, [

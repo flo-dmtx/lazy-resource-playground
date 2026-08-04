@@ -53,7 +53,7 @@ export class SleepingParamsDemo {
     readonly open = signal(false);
 
     readonly selected = rxResource({
-        lazy: true,
+        load: "whenTracked",
         params: () => this.userId(),
         stream: ({ params }) => fakeFetch(this.log, `/api/users/${params}`, userById(params)),
     });

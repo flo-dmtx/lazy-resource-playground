@@ -5,6 +5,7 @@ import { ContractDemo } from "./demo-contract";
 import { LiftedDemo } from "./demo-lifted";
 import { SleepingParamsDemo } from "./demo-sleeping-params";
 import { TabsDemo } from "./demo-tabs";
+import { WhileTrackedDemo } from "./demo-while-tracked";
 
 /** StackBlitz URL of this project; empty hides the editor links. */
 export const STACKBLITZ_PROJECT = "https://stackblitz.com/github/flo-dmtx/lazy-resource-playground";
@@ -31,6 +32,11 @@ export const DEMOS: Record<string, DemoEntry> = {
         file: "demo-sleeping-params.ts",
         title: "params picked before opening",
     },
+    reset: {
+        component: WhileTrackedDemo,
+        file: "demo-while-tracked.ts",
+        title: "a value that should not outlive its screen",
+    },
     chain: {
         component: ChainDemo,
         file: "demo-chain.ts",
@@ -39,7 +45,7 @@ export const DEMOS: Record<string, DemoEntry> = {
     contract: {
         component: ContractDemo,
         file: "demo-contract.ts",
-        title: "writes and errors, before and after the first read",
+        title: "writes and errors, before and after the first listener",
     },
 };
 

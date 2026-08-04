@@ -2,6 +2,8 @@ import {
     assertInInjectionContext,
     computed,
     DestroyRef,
+    effect,
+    EffectRef,
     inject,
     Injector,
     linkedSignal,
@@ -23,38 +25,44 @@ import {
     WritableSignal,
 } from "@angular/core";
 import {
-    consumerAfterComputation,
-    consumerBeforeComputation,
     consumerDestroy,
     producerAccessed,
-    producerUpdateValueVersion,
     REACTIVE_NODE,
     ReactiveNode,
-    setActiveConsumer,
     SIGNAL,
 } from "@angular/core/primitives/signals";
 import type { RxResourceOptions } from "@angular/core/rxjs-interop";
 
 /**
  * `lazyResource` and `lazyRxResource`: like the native `resource` and `rxResource`, but the
- * request starts from being read rather than from an effect.
+ * request starts from being listened to rather than from construction.
  *
- * Angular's own resource schedules an effect at construction, so it fetches whether or not
- * anything displays it; the only way to hold it back is to feed it params it cannot use. Here
- * there is no effect at all: a producer node is asked to recompute when something reads any of
- * the resource's signals, and that is where the load starts. An `@if` that is false, a tab that
- * is not open, a `@defer` that has not triggered never ask, so never fetch.
+ * A resource is a reactive stream, and there are exactly two ways to consume one. Listening — a
+ * live reactive context (a template or an effect, directly or through any depth of `computed`s)
+ * tracking one of its signals — is what demand means: the first listener wakes a lazy resource.
+ * Every other read is a photograph: outside a reactive context (including inside `untracked()`)
+ * a read reports the current state at that instant and starts nothing, so a dormant resource
+ * truthfully reads `idle`. One invariant follows: no load ever runs while nothing tracks the
+ * resource. An `@if` that is false, a tab that is not open, a `@defer` that has not triggered
+ * never listen, so never fetch.
  *
- * Unlike an observable behind the async pipe, the answer outlives the reader: coming back to a
- * closed tab shows what was already loaded instead of downloading it again.
+ * Two strategies, differing only in what happens when the last listener leaves:
  *
- * Everything else mirrors the native contract: same options (`params` with `chain` support, a
- * promise `loader` for `lazyResource` or a `stream` receiving `{params, abortSignal, previous}`
- * for `lazyRxResource`, `defaultValue`, `equal`, `injector`), same `ResourceRef` surface
- * (`value` writable, `set`/`update` going `local`, `reload`, `destroy`, `hasValue`), same status
- * projection (`idle`/`loading`/`reloading`/`resolved`/`local`/`error`). One deliberate
- * improvement over native: a synchronous source resolves during the very read that started it,
- * instead of a microtask later.
+ * - `load: "whenTracked"` (the default): the settled value is retained — coming back to a closed
+ *   tab shows what was already loaded instead of downloading it again (until the params change,
+ *   which invalidates the value as usual).
+ * - `load: "whileTracked"`: the resource lives exactly while listened to — an in-flight load is
+ *   cancelled, the value is dropped (local values included) and the next listener starts over.
+ *   For data that should not outlive the screen showing it.
+ *
+ * Shared rules: params changes while dormant are tracked but never fetched (the first listener
+ * uses the latest value); while listened to, the resource behaves exactly like a native one
+ * (params → refetch, `reload()`, statuses, errors, cancellation); `set()` goes `local` without
+ * loading; `reload()` while dormant never starts a load (it returns `false` when nothing ever
+ * settled, and otherwise marks the settled value for a refetch by the next listener); a dormant
+ * resource never blocks application stability. Options and the `ResourceRef` surface are the
+ * native ones (`params` with `chain` support, a promise `loader` for `lazyResource` or a
+ * `stream` for `lazyRxResource`, `defaultValue`, `equal`, `injector`).
  *
  * Usage: copy this file into your project and swap the constructor.
  *
@@ -63,19 +71,33 @@ import type { RxResourceOptions } from "@angular/core/rxjs-interop";
  *     params: () => this.userId(),
  *     stream: ({ params }) => this.api.user(params),
  * });
- * // nothing fetches until something reads user.value(), user.status(), ...
+ * // nothing fetches until a template or an effect tracks user.value(), user.status(), ...
  * ```
  *
- * This file is the userland twin of a proposal to add `lazy: true` to Angular's own resources:
+ * This file is the userland twin of a proposal to add lazy load strategies to Angular's own
+ * resources (feature request angular/angular#70036, proposal v2: `load: 'eager' | 'whenTracked'
+ * | 'whileTracked'`). Detecting listeners is the one part core gets for free and userland
+ * cannot reach cleanly: "the first live consumer arrived / the last one left" is the reactive
+ * graph's own bookkeeping, with no public API. The twin observes it by turning the `consumers`
+ * field of its own reactive node into an accessor property (see `createTrackNode`); this works,
+ * but it is exactly the kind of non-contractual coupling that argues for core support, where the
+ * same transitions are two hooks mirroring the TC39 Signals proposal's `watched`/`unwatched`.
+ * - feature request: https://github.com/angular/angular/issues/70036
  * - interactive proposal: https://flo-dmtx.github.io/lazy-resource-playground/
  * - playground source (edit on StackBlitz): https://github.com/flo-dmtx/lazy-resource-playground
- * - native implementation, tested: https://github.com/flo-dmtx/angular/tree/feat/lazy-resource
+ * - native implementation, tested: https://github.com/flo-dmtx/angular/tree/feat/lazy-resource-v2
  */
+export type LazyLoadStrategy = "whenTracked" | "whileTracked";
+
 export function lazyResource<T, R>(
-    options: ResourceOptions<T, R> & { defaultValue: NoInfer<T> },
+    options: ResourceOptions<T, R> & { defaultValue: NoInfer<T>; load?: LazyLoadStrategy },
 ): ResourceRef<T>;
-export function lazyResource<T, R>(options: ResourceOptions<T, R>): ResourceRef<T | undefined>;
-export function lazyResource<T, R>(options: ResourceOptions<T, R>): ResourceRef<T | undefined> {
+export function lazyResource<T, R>(
+    options: ResourceOptions<T, R> & { load?: LazyLoadStrategy },
+): ResourceRef<T | undefined>;
+export function lazyResource<T, R>(
+    options: ResourceOptions<T, R> & { load?: LazyLoadStrategy },
+): ResourceRef<T | undefined> {
     if (!options.injector) {
         assertInInjectionContext(lazyResource);
     }
@@ -91,10 +113,14 @@ export function lazyResource<T, R>(options: ResourceOptions<T, R>): ResourceRef<
 }
 
 export function lazyRxResource<T, R>(
-    options: RxResourceOptions<T, R> & { defaultValue: NoInfer<T> },
+    options: RxResourceOptions<T, R> & { defaultValue: NoInfer<T>; load?: LazyLoadStrategy },
 ): ResourceRef<T>;
-export function lazyRxResource<T, R>(options: RxResourceOptions<T, R>): ResourceRef<T | undefined>;
-export function lazyRxResource<T, R>(options: RxResourceOptions<T, R>): ResourceRef<T | undefined> {
+export function lazyRxResource<T, R>(
+    options: RxResourceOptions<T, R> & { load?: LazyLoadStrategy },
+): ResourceRef<T | undefined>;
+export function lazyRxResource<T, R>(
+    options: RxResourceOptions<T, R> & { load?: LazyLoadStrategy },
+): ResourceRef<T | undefined> {
     if (!options.injector) {
         assertInInjectionContext(lazyRxResource);
     }
@@ -103,8 +129,6 @@ export function lazyRxResource<T, R>(options: RxResourceOptions<T, R>): Resource
         connect: connectStream(options.stream),
     }) as unknown as ResourceRef<T | undefined>;
 }
-
-const UNSET = Symbol("unset");
 
 interface ExtRequest<R> {
     readonly request?: R;
@@ -126,6 +150,7 @@ interface LazyResourceInternalOptions<T, R> {
     readonly equal?: ValueEqualityFn<T>;
     readonly defaultValue?: T;
     readonly injector?: Injector;
+    readonly load?: LazyLoadStrategy;
     readonly connect: Connect<T, R>;
 }
 
@@ -134,10 +159,13 @@ class LazyResourceImpl<T, R> implements Resource<T | undefined> {
     private readonly equal: ValueEqualityFn<T | undefined> | undefined;
     private readonly pendingTasks: PendingTasks;
     private readonly unregisterOnDestroy: () => void;
+    private readonly injector: Injector;
+    private readonly dropOnSleep: boolean;
 
     private destroyed = false;
     private pendingController: AbortController | undefined;
     private resolvePendingTask: (() => void) | undefined;
+    private loadEffect: EffectRef | undefined;
 
     // What the params function asked for, plus a reload generation. Thrown ResourceParamsStatus
     // codes and errors are captured as alternate variants instead of request values.
@@ -157,62 +185,20 @@ class LazyResourceImpl<T, R> implements Resource<T | undefined> {
     // showing the old value.
     private readonly state = linkedSignal<ExtRequest<R>, LoaderState<T, R>>({
         source: () => this.extRequest(),
-        computation: (extRequest, previous) => {
-            let status: LoaderState<T, R>["status"];
-            let stream: LoaderState<T, R>["stream"];
-            if (extRequest.error !== undefined) {
-                status = "resolved";
-                stream = signal({ error: encapsulateError(extRequest.error) });
-            } else {
-                status = extRequest.status ?? (extRequest.request === undefined ? "idle" : "loading");
-                if (previous && previous.value.extRequest.request === extRequest.request) {
-                    stream = previous.value.stream;
-                }
-            }
-            return {
-                extRequest,
-                status,
-                previousStatus: previous ? projectStatusOfState(previous.value) : "idle",
-                stream,
-            };
-        },
+        computation: (extRequest, previous) => computeState(extRequest, previous?.value),
     });
 
-    // The lazy trigger. Reading any public signal pulls this node; the node tracks extRequest, so
-    // it recomputes on the first read and again whenever the params or the reload generation
-    // change - and recomputing is where the load side effect lives.
-    private readonly node: ReactiveNode & { value: unknown } = Object.assign(
-        Object.create(REACTIVE_NODE) as ReactiveNode,
-        {
-            value: UNSET as unknown,
-            dirty: true,
-            // A node that has never computed has no tracked dependency to have changed, so nothing
-            // else would make producerUpdateValueVersion run the computation a first time.
-            producerMustRecompute: () => this.node.value === UNSET,
-            producerRecomputeValue: () => {
-                const previousConsumer = consumerBeforeComputation(this.node);
-                try {
-                    const extRequest = this.extRequest();
-                    // Record the pull before loading: a stream that synchronously reads back one
-                    // of the resource's own signals must not re-enter this computation.
-                    this.node.value = extRequest;
-                    this.node.version++;
-                    // Starting the request is a side effect, and a synchronous stream resolves the
-                    // state right here - hence outside the reactive context, and before consumers
-                    // read the state, so this very pass already sees what a synchronous source
-                    // produced.
-                    const consumer = setActiveConsumer(null);
-                    try {
-                        this.loadIfNeeded(extRequest);
-                    } finally {
-                        setActiveConsumer(consumer);
-                    }
-                } finally {
-                    consumerAfterComputation(this.node, previousConsumer);
-                }
-            },
-        },
-    );
+    // Whether the load effect exists. Read by the status projection, so a listener that saw a
+    // dormant `idle` is notified when waking turns it into `loading`.
+    private readonly awake = signal(false);
+
+    // The liveness sensor: every public signal registers this node as a dependency, so a live
+    // listener reaches it through the graph, and its watched/unwatched transitions drive the
+    // lazy lifecycle.
+    private readonly node = createTrackNode({
+        watched: () => this.scheduleWake(),
+        unwatched: () => this.scheduleSleep(),
+    });
 
     readonly value: WritableSignal<T | undefined>;
     readonly status: Signal<ResourceStatus>;
@@ -226,13 +212,14 @@ class LazyResourceImpl<T, R> implements Resource<T | undefined> {
         this.paramsFn = options.params;
         this.connect = options.connect;
         this.equal = options.equal ? wrapEqualityFn(options.equal as ValueEqualityFn<T | undefined>) : undefined;
+        this.dropOnSleep = options.load === "whileTracked";
         const defaultValue = options.defaultValue;
 
-        const injector = options.injector ?? inject(Injector);
+        const injector = (this.injector = options.injector ?? inject(Injector));
         this.pendingTasks = injector.get(PendingTasks);
         this.unregisterOnDestroy = injector.get(DestroyRef).onDestroy(() => this.destroy());
 
-        const value = computed(() => (this.pull(), this.computeValue(this.state(), defaultValue)), {
+        const value = computed(() => (this.track(), this.computeValue(this.state(), defaultValue)), {
             equal: this.equal,
         });
         this.value = Object.assign(value, {
@@ -241,13 +228,19 @@ class LazyResourceImpl<T, R> implements Resource<T | undefined> {
             asReadonly: () => value,
         }) as unknown as WritableSignal<T | undefined>;
 
-        this.status = computed(() =>
+        this.status = computed(() => {
             // A destroyed resource stays idle: without this, a params change after destroy()
             // would recompute the state to "loading" even though nothing will ever load.
-            this.destroyed ? "idle" : (this.pull(), projectStatusOfState(this.state())),
-        );
+            if (this.destroyed) return "idle";
+            this.track();
+            const status = projectStatusOfState(this.state());
+            // While dormant, the internal state speculates about the load that waking would
+            // start; no load is actually running, so the resource truthfully reports idle.
+            if (!this.awake() && (status === "loading" || status === "reloading")) return "idle";
+            return status;
+        });
         this.error = computed(() => {
-            this.pull();
+            this.track();
             const streamValue = this.state().stream?.();
             return streamValue && "error" in streamValue ? streamValue.error : undefined;
         });
@@ -302,6 +295,8 @@ class LazyResourceImpl<T, R> implements Resource<T | undefined> {
     destroy(): void {
         this.destroyed = true;
         this.unregisterOnDestroy();
+        this.loadEffect?.destroy();
+        this.loadEffect = undefined;
         consumerDestroy(this.node);
         this.abortInProgressLoad();
         this.state.set({
@@ -312,9 +307,51 @@ class LazyResourceImpl<T, R> implements Resource<T | undefined> {
         });
     }
 
-    private pull(): void {
-        producerUpdateValueVersion(this.node);
+    // Registers the tracking node as a dependency of the calling reactive context: this is how a
+    // listener's liveness reaches the node. A read outside any reactive context registers
+    // nothing, so wakes nothing.
+    private track(): void {
+        if (this.destroyed) return;
         producerAccessed(this.node);
+    }
+
+    /**
+     * The resource gained its first listener: wake up. Deferred to a microtask because the
+     * transition fires in the middle of a graph mutation; skipped if every listener already left
+     * in the meantime. Waking is creating the load effect — the only place a load ever starts.
+     */
+    private scheduleWake(): void {
+        queueMicrotask(() => {
+            if (this.destroyed || untracked(this.awake) || this.node.consumers === undefined) return;
+            this.awake.set(true);
+            this.loadEffect = effect(
+                () => {
+                    const extRequest = this.extRequest();
+                    untracked(() => this.loadIfNeeded(extRequest));
+                },
+                { injector: this.injector, manualCleanup: true },
+            );
+        });
+    }
+
+    /**
+     * The last listener left, go back to sleep: no load may run while nothing tracks the
+     * resource, so the load effect is torn down and any in-flight load aborted. `whenTracked`
+     * keeps a settled value for the next listener; `whileTracked` additionally forgets, by
+     * recomputing the state from the current params as if fresh — the next listener starts over.
+     * Skipped if something started listening again in the meantime.
+     */
+    private scheduleSleep(): void {
+        queueMicrotask(() => {
+            if (this.destroyed || !untracked(this.awake) || this.node.consumers !== undefined) return;
+            this.loadEffect?.destroy();
+            this.loadEffect = undefined;
+            this.abortInProgressLoad();
+            this.awake.set(false);
+            if (this.dropOnSleep) {
+                this.state.set(computeState(untracked(this.extRequest)));
+            }
+        });
     }
 
     private computeValue(state: LoaderState<T, R>, defaultValue: T | undefined): T | undefined {
@@ -392,7 +429,7 @@ class LazyResourceImpl<T, R> implements Resource<T | undefined> {
     }
 }
 
-// Mark the pull node so devtools-style introspection sees a reactive producer, not a plain object.
+// Mark the impl so devtools-style introspection sees a reactive producer, not a plain object.
 Object.defineProperty(LazyResourceImpl.prototype, SIGNAL, { value: undefined, writable: true });
 
 // ----------------------------
@@ -407,6 +444,57 @@ interface ConnectSink<T> {
 
 /** Bridges one load attempt to its source; may return a teardown, run when the load is aborted. */
 type Connect<T, R> = (params: ResourceLoaderParams<R>, sink: ConnectSink<T>) => (() => void) | void;
+
+/**
+ * A passive producer node: it never recomputes and never notifies, it only exists to be tracked.
+ * The graph maintains its live-consumer list through the `consumers` head pointer, and only ever
+ * writes that field on the transitions that matter here: empty → non-empty when the first live
+ * consumer arrives (directly, or by liveness cascading down through computeds), non-empty →
+ * empty when the last one leaves. Turning the field into an accessor property is how userland
+ * observes what the core proposal exposes as `producerOnWatched`/`producerOnUnwatched` hooks —
+ * it works, but nothing contracts the graph to keep this exact bookkeeping.
+ */
+function createTrackNode(hooks: { watched(): void; unwatched(): void }): ReactiveNode {
+    const node = Object.create(REACTIVE_NODE) as ReactiveNode;
+    node.producerMustRecompute = () => false;
+    node.producerRecomputeValue = () => {};
+    let consumers: ReactiveNode["consumers"];
+    Object.defineProperty(node, "consumers", {
+        get: () => consumers,
+        set: (link: ReactiveNode["consumers"]) => {
+            const wasWatched = consumers !== undefined;
+            consumers = link;
+            if (!wasWatched && link !== undefined) hooks.watched();
+            if (wasWatched && link === undefined) hooks.unwatched();
+        },
+    });
+    return node;
+}
+
+/**
+ * Derives the machine state from what the params asked for. Called with no previous state, it
+ * also says what "fresh" means — which is why the `whileTracked` sleep reuses it to forget: an
+ * abandoned resource is indistinguishable from one that never loaded.
+ */
+function computeState<T, R>(extRequest: ExtRequest<R>, previous?: LoaderState<T, R>): LoaderState<T, R> {
+    let status: LoaderState<T, R>["status"];
+    let stream: LoaderState<T, R>["stream"];
+    if (extRequest.error !== undefined) {
+        status = "resolved";
+        stream = signal({ error: encapsulateError(extRequest.error) });
+    } else {
+        status = extRequest.status ?? (extRequest.request === undefined ? "idle" : "loading");
+        if (previous && previous.extRequest.request === extRequest.request) {
+            stream = previous.stream;
+        }
+    }
+    return {
+        extRequest,
+        status,
+        previousStatus: previous ? projectStatusOfState(previous) : "idle",
+        stream,
+    };
+}
 
 function connectLoader<T, R>(loader: (params: ResourceLoaderParams<R>) => PromiseLike<T>): Connect<T, R> {
     return (params, sink) => {

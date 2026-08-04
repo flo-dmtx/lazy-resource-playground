@@ -1,5 +1,29 @@
+diff --git a/node_modules/@angular/core/fesm2022/_effect-chunk.mjs b/node_modules/@angular/core/fesm2022/_effect-chunk.mjs
+index 04717ee..2df2daf 100755
+--- a/node_modules/@angular/core/fesm2022/_effect-chunk.mjs
++++ b/node_modules/@angular/core/fesm2022/_effect-chunk.mjs
+@@ -212,6 +212,9 @@ function producerAddLiveConsumer(node, link) {
+       producerAddLiveConsumer(link.producer, link);
+     }
+   }
++  if (consumersTail === undefined) {
++    node.producerOnWatched?.(node);
++  }
+ }
+ function producerRemoveLiveConsumerLink(link) {
+   const producer = link.producer;
+@@ -235,6 +238,9 @@ function producerRemoveLiveConsumerLink(link) {
+         producerLink = producerRemoveLiveConsumerLink(producerLink);
+       }
+     }
++    if (nextConsumer === undefined) {
++      producer.producerOnUnwatched?.(producer);
++    }
+   }
+   return nextProducer;
+ }
 diff --git a/node_modules/@angular/core/fesm2022/_resource-chunk.mjs b/node_modules/@angular/core/fesm2022/_resource-chunk.mjs
-index 41db17e..dfedd5d 100755
+index 41db17e..76a6fec 100755
 --- a/node_modules/@angular/core/fesm2022/_resource-chunk.mjs
 +++ b/node_modules/@angular/core/fesm2022/_resource-chunk.mjs
 @@ -5,7 +5,7 @@
@@ -7,7 +31,7 @@ index 41db17e..dfedd5d 100755
  
  import { inject, RuntimeError, formatRuntimeError, ErrorHandler, DestroyRef, InjectionToken, signalAsReadonlyFn, assertInInjectionContext, TransferState, effect, PendingTasks, signal, isSignal, Injector } from './_pending_tasks-chunk.mjs';
 -import { setActiveConsumer, createComputed, SIGNAL } from './_effect-chunk.mjs';
-+import { setActiveConsumer, createComputed, SIGNAL, consumerAfterComputation, consumerBeforeComputation, consumerDestroy, producerAccessed, producerUpdateValueVersion, REACTIVE_NODE, runPostProducerCreatedFn } from './_effect-chunk.mjs';
++import { setActiveConsumer, createComputed, SIGNAL, consumerDestroy, producerAccessed, REACTIVE_NODE, runPostProducerCreatedFn } from './_effect-chunk.mjs';
  import { untracked as untracked$1, createLinkedSignal, linkedSignalSetFn, linkedSignalUpdateFn } from './_untracked-chunk.mjs';
  
  class OutputEmitterRef {
@@ -16,51 +40,36 @@ index 41db17e..dfedd5d 100755
    const oldNameForParams = options.request;
    const params = options.params ?? oldNameForParams ?? (() => null);
 -  return new ResourceImpl(params, getLoader(options), options.defaultValue, options.equal ? wrapEqualityFn(options.equal) : undefined, options.debugName, options.injector ?? inject(Injector), options.id);
-+  return new ResourceImpl(params, getLoader(options), options.defaultValue, options.equal ? wrapEqualityFn(options.equal) : undefined, options.debugName, options.injector ?? inject(Injector), options.id, undefined, options.lazy ? 'lazy' : 'eager');
++  return new ResourceImpl(params, getLoader(options), options.defaultValue, options.equal ? wrapEqualityFn(options.equal) : undefined, options.debugName, options.injector ?? inject(Injector), options.id, undefined, options.load ?? 'eager');
  }
  class BaseWritableResource {
    value;
-@@ -201,6 +201,31 @@ class BaseWritableResource {
+@@ -201,6 +201,13 @@ class BaseWritableResource {
      return this;
    }
  }
-+const UNSET_PULL = /* @__PURE__ */Symbol('UNSET_PULL');
-+const RESOURCE_PULL_NODE = /* @__PURE__ */(() => {
++const RESOURCE_TRACK_NODE = /* @__PURE__ */(() => {
 +  return {
 +    ...REACTIVE_NODE,
-+    value: UNSET_PULL,
-+    dirty: true,
-+    producerMustRecompute: node => node.value === UNSET_PULL,
-+    producerRecomputeValue: node => {
-+      const prevConsumer = consumerBeforeComputation(node);
-+      try {
-+        const extRequest = node.readExtRequest();
-+        node.value = extRequest;
-+        node.version++;
-+        const consumer = setActiveConsumer(null);
-+        try {
-+          node.load();
-+        } finally {
-+          setActiveConsumer(consumer);
-+        }
-+      } finally {
-+        consumerAfterComputation(node, prevConsumer);
-+      }
-+    }
++    producerMustRecompute: () => false,
++    producerRecomputeValue: () => {}
 +  };
 +})();
  class ResourceImpl extends BaseWritableResource {
    loaderFn;
    equal;
-@@ -210,6 +235,7 @@ class ResourceImpl extends BaseWritableResource {
+@@ -210,6 +217,10 @@ class ResourceImpl extends BaseWritableResource {
    state;
    extRequest;
    effectRef;
-+  pullNode;
++  injector;
++  trackNode;
++  loadEffectRef;
++  awake;
    pendingController;
    resolvePendingTask = undefined;
    destroyed = false;
-@@ -217,11 +243,12 @@ class ResourceImpl extends BaseWritableResource {
+@@ -217,11 +228,12 @@ class ResourceImpl extends BaseWritableResource {
    status;
    error;
    transferState;
@@ -70,11 +79,76 @@ index 41db17e..dfedd5d 100755
        throw invalidResourceCreationInParams();
      }
      super(computed(() => {
-+      this.pull();
++      this.track();
        const streamValue = this.state().stream?.();
        if (!streamValue) {
          return defaultValue;
-@@ -323,15 +350,37 @@ class ResourceImpl extends BaseWritableResource {
+@@ -240,6 +252,7 @@ class ResourceImpl extends BaseWritableResource {
+     this.loaderFn = loaderFn;
+     this.equal = equal;
+     this.debugName = debugName;
++    this.injector = injector;
+     this.transferCacheKey = transferCacheKey;
+     const cacheState = injector.get(CACHE_ACTIVE, undefined, {
+       optional: true
+@@ -280,58 +293,58 @@ class ResourceImpl extends BaseWritableResource {
+     this.state = linkedSignal({
+       source: this.extRequest,
+       computation: (extRequest, previous) => {
+-        let {
+-          request,
+-          status,
+-          error
+-        } = extRequest;
+-        let stream;
+-        if (error) {
+-          status = 'resolved';
+-          stream = signal({
+-            error: encapsulateResourceError(error)
+-          }, ngDevMode ? createDebugNameObject(this.debugName, 'stream') : undefined);
+-        } else if (!status) {
+-          if (!previous) {
+-            const transferState = this.transferState;
+-            const cacheKey = this.transferCacheKey;
+-            if (cacheState.isActive && cacheKey && transferState && request !== undefined) {
+-              if (transferState.hasKey(cacheKey)) {
+-                stream = signal({
+-                  value: transferState.get(cacheKey, defaultValue)
+-                }, ngDevMode ? createDebugNameObject(this.debugName, 'stream') : undefined);
+-              }
+-            }
+-            if (!stream) {
+-              stream = getInitialStream?.(extRequest.request);
+-            }
+-            getInitialStream = undefined;
+-            status = request === undefined ? 'idle' : stream ? 'resolved' : 'loading';
+-          } else {
+-            status = request === undefined ? 'idle' : 'loading';
+-            if (previous.value.extRequest.request === request) {
+-              stream = previous.value.stream;
++        let initialStream;
++        if (!previous && !extRequest.error && !extRequest.status) {
++          const transferState = this.transferState;
++          const cacheKey = this.transferCacheKey;
++          if (cacheState.isActive && cacheKey && transferState && extRequest.request !== undefined) {
++            if (transferState.hasKey(cacheKey)) {
++              initialStream = signal({
++                value: transferState.get(cacheKey, defaultValue)
++              }, ngDevMode ? createDebugNameObject(this.debugName, 'stream') : undefined);
+             }
+           }
++          if (!initialStream) {
++            initialStream = getInitialStream?.(extRequest.request);
++          }
++          getInitialStream = undefined;
+         }
+-        return {
+-          extRequest,
+-          status,
+-          previousStatus: previous ? projectStatusOfState(previous.value) : 'idle',
+-          stream
+-        };
++        return computeState(extRequest, previous?.value, initialStream, this.debugName);
        },
        ...(ngDevMode ? createDebugNameObject(debugName, 'state') : undefined)
      });
@@ -83,19 +157,16 @@ index 41db17e..dfedd5d 100755
 -      manualCleanup: true,
 -      ...(ngDevMode ? createDebugNameObject(debugName, 'loadEffect') : undefined)
 -    });
-+    if (loadStrategy === 'lazy') {
-+      const node = Object.create(RESOURCE_PULL_NODE);
-+      node.readExtRequest = () => this.extRequest();
-+      node.load = () => {
-+        if (!this.destroyed) {
-+          this.loadEffect();
-+        }
-+      };
++    this.awake = signal(loadStrategy === 'eager');
++    if (loadStrategy !== 'eager') {
++      const node = Object.create(RESOURCE_TRACK_NODE);
++      node.producerOnWatched = () => this.scheduleWake();
++      node.producerOnUnwatched = () => this.scheduleSleep(loadStrategy === 'whileTracked');
 +      if (typeof ngDevMode !== 'undefined' && ngDevMode) {
-+        node.debugName = createDebugNameObject(debugName, 'pull')?.debugName;
++        node.debugName = createDebugNameObject(debugName, 'track')?.debugName;
 +      }
 +      runPostProducerCreatedFn(node);
-+      this.pullNode = node;
++      this.trackNode = node;
 +    } else {
 +      this.effectRef = effect(this.loadEffect.bind(this), {
 +        injector,
@@ -110,15 +181,19 @@ index 41db17e..dfedd5d 100755
 +      if (this.destroyed) {
 +        return 'idle';
 +      }
-+      this.pull();
-+      return projectStatusOfState(this.state());
++      this.track();
++      const status = projectStatusOfState(this.state());
++      if (!this.awake() && (status === 'loading' || status === 'reloading')) {
++        return 'idle';
++      }
++      return status;
 +    }, ngDevMode ? createDebugNameObject(debugName, 'status') : undefined);
      this.error = computed(() => {
-+      this.pull();
++      this.track();
        const stream = this.state().stream?.();
        return stream && !isResolved(stream) ? stream.error : undefined;
      }, ngDevMode ? createDebugNameObject(debugName, 'error') : undefined);
-@@ -340,11 +389,12 @@ class ResourceImpl extends BaseWritableResource {
+@@ -340,11 +353,12 @@ class ResourceImpl extends BaseWritableResource {
      if (this.destroyed) {
        return;
      }
@@ -134,49 +209,121 @@ index 41db17e..dfedd5d 100755
          return;
        }
      }
-@@ -377,7 +427,10 @@ class ResourceImpl extends BaseWritableResource {
+@@ -377,7 +391,12 @@ class ResourceImpl extends BaseWritableResource {
    destroy() {
      this.destroyed = true;
      this.unregisterOnDestroy();
 -    this.effectRef.destroy();
 +    this.effectRef?.destroy();
-+    if (this.pullNode !== undefined) {
-+      consumerDestroy(this.pullNode);
++    this.loadEffectRef?.destroy();
++    this.loadEffectRef = undefined;
++    if (this.trackNode !== undefined) {
++      consumerDestroy(this.trackNode);
 +    }
      this.abortInProgressLoad();
      this.state.set({
        extRequest: {
-@@ -389,6 +442,13 @@ class ResourceImpl extends BaseWritableResource {
+@@ -389,6 +408,39 @@ class ResourceImpl extends BaseWritableResource {
        stream: undefined
      });
    }
-+  pull() {
-+    if (this.pullNode === undefined || this.destroyed) {
++  track() {
++    if (this.trackNode === undefined || this.destroyed) {
 +      return;
 +    }
-+    producerUpdateValueVersion(this.pullNode);
-+    producerAccessed(this.pullNode);
++    producerAccessed(this.trackNode);
++  }
++  scheduleWake() {
++    queueMicrotask(() => {
++      if (this.destroyed || untracked(this.awake) || this.trackNode.consumers === undefined) {
++        return;
++      }
++      this.awake.set(true);
++      this.loadEffectRef = effect(this.loadEffect.bind(this), {
++        injector: this.injector,
++        manualCleanup: true,
++        ...(ngDevMode ? createDebugNameObject(this.debugName, 'loadEffect') : undefined)
++      });
++    });
++  }
++  scheduleSleep(dropValue) {
++    queueMicrotask(() => {
++      if (this.destroyed || !untracked(this.awake) || this.trackNode.consumers !== undefined) {
++        return;
++      }
++      this.loadEffectRef?.destroy();
++      this.loadEffectRef = undefined;
++      this.abortInProgressLoad();
++      this.awake.set(false);
++      if (dropValue) {
++        this.state.set(computeState(untracked(this.extRequest), undefined, undefined, this.debugName));
++      }
++    });
 +  }
    async loadEffect() {
      const extRequest = this.extRequest();
      const {
+@@ -498,6 +550,36 @@ function getLoader(options) {
+ function isStreamingResourceOptions(options) {
+   return !!options.stream;
+ }
++function computeState(extRequest, previous, initialStream, debugName) {
++  let {
++    request,
++    status,
++    error
++  } = extRequest;
++  let stream;
++  if (error) {
++    status = 'resolved';
++    stream = signal({
++      error: encapsulateResourceError(error)
++    }, ngDevMode ? createDebugNameObject(debugName, 'stream') : undefined);
++  } else if (!status) {
++    if (!previous) {
++      stream = initialStream;
++      status = request === undefined ? 'idle' : stream ? 'resolved' : 'loading';
++    } else {
++      status = request === undefined ? 'idle' : 'loading';
++      if (previous.extRequest.request === request) {
++        stream = previous.stream;
++      }
++    }
++  }
++  return {
++    extRequest,
++    status,
++    previousStatus: previous ? projectStatusOfState(previous) : 'idle',
++    stream
++  };
++}
+ function projectStatusOfState(state) {
+   switch (state.status) {
+     case 'loading':
 diff --git a/node_modules/@angular/core/types/_api-chunk.d.ts b/node_modules/@angular/core/types/_api-chunk.d.ts
-index a41a786..044728b 100755
+index a41a786..5862cd1 100755
 --- a/node_modules/@angular/core/types/_api-chunk.d.ts
 +++ b/node_modules/@angular/core/types/_api-chunk.d.ts
-@@ -285,6 +285,15 @@ interface BaseResourceOptions<T, R> {
+@@ -285,6 +285,22 @@ interface BaseResourceOptions<T, R> {
       * This value value needs to be identical for both the client and server.
       */
      id?: string;
 +    /**
-+     * Whether the resource defers loading until the first time one of its signals is read.
++     * When the resource loads.
 +     *
-+     * A lazy resource performs no work at creation. `params` changes while unread do not trigger
-+     * loads; the first read uses the latest params. Not recommended with `id`.
++     * - `'eager'` (the default): the loader runs at creation and again whenever `params` change.
++     * - `'whenTracked'`: the resource is dormant until the first time it is tracked by a live
++     *   reactive context (a template or an effect reading any of its signals, directly or through
++     *   computeds). That first listener starts the load; once loaded, the value is retained even
++     *   when nothing tracks the resource anymore.
++     * - `'whileTracked'`: the resource lives exactly while tracked: the first listener starts the
++     *   load, and when the last listener leaves, any in-flight load is cancelled, the value is
++     *   dropped and the resource returns to `idle`. The next listener starts over.
 +     *
-+     * Defaults to `false` (the loader runs eagerly whenever `params` change).
++     * With a lazy strategy, reads outside a reactive context (including inside `untracked()`)
++     * never start anything: they report the current state, and a dormant resource reports `idle`.
 +     */
-+    lazy?: boolean;
++    load?: 'eager' | 'whenTracked' | 'whileTracked';
  }
  /**
   * Options to the `resource` function, for creating a resource.
